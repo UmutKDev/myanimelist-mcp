@@ -1,5 +1,9 @@
 FROM python:3.12-slim
 
+LABEL org.opencontainers.image.source="https://github.com/UmutKDev/myanimelist-mcp" \
+      org.opencontainers.image.description="Stateless MyAnimeList MCP server (streamable-http)" \
+      org.opencontainers.image.licenses="MIT"
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 ENV UV_COMPILE_BYTECODE=1 \
