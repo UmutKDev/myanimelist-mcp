@@ -1,9 +1,15 @@
 """MyAnimeList MCP server (streamable-http, stateless).
 
-Designed to run behind an MCP gateway (Obot) that performs the OAuth flow and
-forwards ``Authorization: Bearer <MAL access token>`` with every request. This
-server never stores, refreshes, or exchanges tokens - it only forwards them to
-the MAL API for the duration of a tool call.
+Token handling, in precedence order:
+
+1. Per-request ``Authorization: Bearer <MAL access token>`` header (e.g. an MCP
+   gateway such as Obot performing the OAuth flow) - forwarded as-is, never stored.
+2. Self-renewing mode: when MAL_REFRESH_TOKEN and MAL_CLIENT_ID (optionally
+   MAL_CLIENT_SECRET) are set, the server mints and renews access tokens itself
+   via OAuth's refresh_token grant. The current tokens are held in process memory
+   only - nothing is written to disk, and no token material appears in logs or
+   error messages. There is still no interactive OAuth login flow here.
+3. Static MAL_ACCESS_TOKEN env var - forwarded as-is.
 """
 
 from __future__ import annotations
@@ -11,6 +17,7 @@ from __future__ import annotations
 import os
 import statistics
 from collections import Counter, defaultdict
+from collections.abc import Awaitable, Callable
 from typing import Annotated, Any, Literal
 
 from fastmcp import FastMCP
@@ -18,7 +25,8 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 from pydantic import Field
 
-from mal_mcp.mal_client import MALClient, MALError
+from mal_mcp.mal_client import MALClient, MALError, MALTokenError
+from mal_mcp.token_manager import TokenManager, TokenRefreshError
 
 mcp = FastMCP("mal_mcp")
 
@@ -30,28 +38,84 @@ StatusFilter = Literal["watching", "completed", "on_hold", "dropped", "plan_to_w
 SortOrder = Literal["list_score", "list_updated_at", "anime_title", "anime_start_date"]
 
 
-def _bearer_token() -> str:
-    """Extract the MAL access token: Authorization header first, env var fallback second."""
+_TOKEN_MANAGER: TokenManager | None = None
+
+
+def _token_manager() -> TokenManager | None:
+    """Lazy singleton so the manager (and its in-memory token cache) persists."""
+    global _TOKEN_MANAGER
+    if _TOKEN_MANAGER is None:
+        _TOKEN_MANAGER = TokenManager.from_env()
+    return _TOKEN_MANAGER
+
+
+def _strip_bearer(value: str) -> str:
+    value = value.strip()
+    if value.lower() == "bearer":  # scheme without a credential
+        return ""
+    if value.lower().startswith("bearer "):
+        value = value[len("bearer ") :].strip()
+    return value
+
+
+async def _resolve_token() -> tuple[str, TokenManager | None]:
+    """Pick the MAL token: Authorization header > refresh-token manager > static env.
+
+    Returns (token, manager); manager is non-None only when the token came from the
+    self-renewing TokenManager, so callers can invalidate + retry on a MAL 401.
+    """
     # fastmcp 3.x strips 'authorization' from get_http_headers() unless re-included.
     headers = get_http_headers(include={"authorization"})
-    auth = headers.get("authorization", "").strip()
-    if not auth:
-        # Obot's containerized runtime delivers user-supplied credentials as env vars
-        # rather than headers, so accept MAL_ACCESS_TOKEN as a fallback. The value is
-        # read per call and never written anywhere.
-        auth = os.getenv("MAL_ACCESS_TOKEN", "").strip()
-    if not auth:
-        raise ToolError(
-            "No MAL access token. Either the gateway must forward "
-            "'Authorization: Bearer <MAL access token>' with the request, or the "
-            "MAL_ACCESS_TOKEN environment variable must be set (e.g. Obot's containerized "
-            "'env' field). Check the gateway configuration."
-        )
-    if auth.lower().startswith("bearer "):
-        auth = auth[len("bearer ") :].strip()
-    if not auth:
-        raise ToolError("An Authorization value is present but contains no token.")
-    return auth
+    header_token = _strip_bearer(headers.get("authorization", ""))
+    if header_token:
+        return header_token, None
+
+    # Obot's containerized runtime delivers user credentials as env vars, not headers.
+    manager = _token_manager()
+    if manager is not None:
+        try:
+            return await manager.get_token(), manager
+        except TokenRefreshError as exc:
+            raise ToolError(str(exc)) from exc
+
+    env_token = _strip_bearer(os.getenv("MAL_ACCESS_TOKEN", ""))
+    if env_token:
+        return env_token, None
+
+    raise ToolError(
+        "No MAL access token. Provide one of: an 'Authorization: Bearer <token>' request "
+        "header (gateway OAuth), MAL_REFRESH_TOKEN + MAL_CLIENT_ID env vars (self-renewing, "
+        "recommended), or a static MAL_ACCESS_TOKEN env var. See the README."
+    )
+
+
+async def _call_mal(op: Callable[[MALClient], Awaitable[Any]]) -> Any:
+    """Run one MAL operation with a resolved token, mapping MALError to ToolError.
+
+    When the token came from the TokenManager and MAL rejects it mid-lifetime
+    (revoked, clock skew), force one refresh and retry once.
+    """
+    token, manager = await _resolve_token()
+    try:
+        async with MALClient(token) as client:
+            return await op(client)
+    except MALTokenError as exc:
+        if manager is None:
+            raise ToolError(str(exc)) from exc
+        # Token-aware: a no-op when a concurrent call already replaced this token,
+        # so staggered 401s don't force N redundant refreshes.
+        manager.invalidate(token)
+        try:
+            fresh = await manager.get_token()
+        except TokenRefreshError as refresh_exc:
+            raise ToolError(str(refresh_exc)) from refresh_exc
+        try:
+            async with MALClient(fresh) as client:
+                return await op(client)
+        except MALError as retry_exc:
+            raise ToolError(str(retry_exc)) from retry_exc
+    except MALError as exc:
+        raise ToolError(str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -266,12 +330,7 @@ async def _fetch_compact_list() -> tuple[list[dict[str, Any]], bool]:
     Returns ``(entries, truncated)``; ``truncated`` is True when the list exceeded
     the 20,000-entry safety cap and the tail was dropped.
     """
-    token = _bearer_token()
-    try:
-        async with MALClient(token) as client:
-            edges, truncated = await client.get_anime_list()
-    except MALError as exc:
-        raise ToolError(str(exc)) from exc
+    edges, truncated = await _call_mal(lambda client: client.get_anime_list())
     return [_compact_entry(edge) for edge in edges], truncated
 
 
@@ -312,14 +371,11 @@ async def get_my_anime_list(
         (0 = not scored), episodes_watched, total_episodes (0 = unknown), genres,
         mal_mean (community score), studios, updated_at.
     """
-    token = _bearer_token()
-    try:
-        async with MALClient(token) as client:
-            edges, has_more = await client.get_anime_list_page(
-                status=status_filter, sort=sort, limit=limit, offset=offset
-            )
-    except MALError as exc:
-        raise ToolError(str(exc)) from exc
+    edges, has_more = await _call_mal(
+        lambda client: client.get_anime_list_page(
+            status=status_filter, sort=sort, limit=limit, offset=offset
+        )
+    )
     entries = [_compact_entry(edge) for edge in edges]
     for e in entries:
         e.pop("avg_episode_duration_sec", None)  # internal detail used only by stats
@@ -378,12 +434,7 @@ async def search_anime(
     media_type, airing_status, mean (community score), num_episodes, genres, and a
     synopsis truncated to 300 characters. Use get_anime_detail for full information.
     """
-    token = _bearer_token()
-    try:
-        async with MALClient(token) as client:
-            nodes = await client.search_anime(query, limit=limit)
-    except MALError as exc:
-        raise ToolError(str(exc)) from exc
+    nodes = await _call_mal(lambda client: client.search_anime(query, limit=limit))
     results = [_compact_search_result(edge.get("node") or {}) for edge in nodes]
     return {"count": len(results), "results": results}
 
@@ -405,12 +456,7 @@ async def get_anime_detail(
     related_anime, and up to 10 community recommendations. If the anime is on the
     authenticated user's list, my_list_status (their status/score/progress) is included.
     """
-    token = _bearer_token()
-    try:
-        async with MALClient(token) as client:
-            data = await client.get_anime_detail(anime_id)
-    except MALError as exc:
-        raise ToolError(str(exc)) from exc
+    data = await _call_mal(lambda client: client.get_anime_detail(anime_id))
     return _compact_detail(data)
 
 

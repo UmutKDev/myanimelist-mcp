@@ -56,6 +56,10 @@ fastmcp 3.4.2 source code, and Obot docs + source (obot, nanobot, mcp-catalog, m
 - No OAuth scopes; a token grants the full API surface for that user.
 - Token lifetimes: docs say access = 1 hour, refresh = 1 month; in practice the API returns
   `expires_in=2678400` (31 days) for access tokens (well-known docs/behavior discrepancy).
+- Refresh grant behavior (verified live 2026-07-05): `grant_type=refresh_token` returns a
+  fresh 31-day access token AND a new (rotated) refresh token; **previously issued refresh
+  tokens remain valid after rotation** — using the same old token twice works. This makes an
+  env-provisioned refresh token safe across container restarts without any persistence.
 - App registration: https://myanimelist.net/apiconfig — App Type **Web** receives a Client Secret;
   Android/iOS/Other are public clients (no secret).
 

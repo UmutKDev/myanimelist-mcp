@@ -108,7 +108,11 @@ class MALClient:
             except httpx.TimeoutException as exc:
                 raise MALAPIError("MAL API request timed out; try again shortly.") from exc
             except httpx.HTTPError as exc:
-                raise MALAPIError(f"Could not reach the MAL API: {exc!r}") from exc
+                # Only the exception type: httpx messages can embed request details.
+                raise MALAPIError(
+                    f"Could not reach the MAL API ({type(exc).__name__}); "
+                    "check connectivity and try again."
+                ) from exc
 
             if response.status_code < 400:
                 try:
@@ -124,8 +128,8 @@ class MALClient:
             if response.status_code == 401:
                 raise MALTokenError(
                     "MAL rejected the access token (401 invalid_token): the token is expired "
-                    "or invalid. Re-authenticate through the gateway (Obot) to obtain a fresh "
-                    "token, then retry."
+                    "or invalid. Renew the credential in use (gateway OAuth login, the "
+                    "MAL_REFRESH_TOKEN setup, or the static MAL_ACCESS_TOKEN) and retry."
                 )
             if response.status_code in (403, 429):
                 # MAL reports rate-limit abuse as 403 ("DoS detected"), not only 429.

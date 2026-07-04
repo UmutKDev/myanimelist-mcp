@@ -18,12 +18,15 @@ MCP client (Claude) ──> Obot gateway ──> mal-mcp (this server) ──> M
                          │ refresh        │ to api.myanimelist.net — nothing stored
 ```
 
-- **No OAuth code in this server.** The gateway performs the OAuth flow (PKCE, callback,
-  token exchange, refresh, storage) and forwards `Authorization: Bearer <MAL access token>`
-  with every MCP request.
-- **Stateless.** Each tool call reads the token from the incoming request's header, uses it
-  for the MAL API calls of that one invocation, and forgets it. Nothing is written to disk,
-  no sessions are kept (`stateless_http=True`), so replicas can scale freely.
+- **No OAuth login flow in this server.** The gateway performs the interactive OAuth flow
+  (PKCE, callback, token exchange) and forwards `Authorization: Bearer <MAL access token>`
+  with every MCP request. Alternatively — because Obot cannot drive MAL's `plain`-PKCE flow
+  today (see below) — the server can renew its own access token from a provisioned
+  `MAL_REFRESH_TOKEN` via the standard `refresh_token` grant: a single POST, no login flow,
+  tokens held in memory only.
+- **Stateless.** Each tool call resolves the token (request header first), uses it for the
+  MAL API calls of that one invocation, and persists nothing to disk. No sessions are kept
+  (`stateless_http=True`), so replicas can scale freely.
 - **Rate-limit friendly.** The MAL rate limit is undocumented (community practice: ~1 req/s;
   abuse surfaces as HTTP 403 "DoS detected"). Every list-based tool fetches the user's whole
   library in a single paginated pass with an explicit `fields` parameter — there are no
@@ -85,8 +88,9 @@ Build and push the image (see [Docker](#docker) below), then in the Obot admin U
 | Port  | `8000` |
 | Path  | `/mcp` |
 
-In the same form, add an environment field so each user can paste their MAL token
-(see "Getting the token to the server" below): key `MAL_ACCESS_TOKEN`, required, sensitive.
+In the same form, add environment fields for the token setup you chose (see "Getting the
+token to the server" below) — recommended: `MAL_REFRESH_TOKEN`, `MAL_CLIENT_ID`,
+`MAL_CLIENT_SECRET` (all sensitive).
 
 Or as a catalog entry:
 
@@ -99,12 +103,31 @@ containerizedConfig:
   port: 8000
   path: /mcp
 env:
-  - key: MAL_ACCESS_TOKEN
-    name: MAL Access Token
+  - key: MAL_REFRESH_TOKEN
+    name: MAL Refresh Token
     required: true
     sensitive: true
-    description: MyAnimeList OAuth access token (obtained manually; see README)
+    description: MyAnimeList OAuth refresh token (obtained once; see README)
+  - key: MAL_CLIENT_ID
+    name: MAL Client ID
+    required: true
+    sensitive: false
+    description: MyAnimeList API app Client ID
+  - key: MAL_CLIENT_SECRET
+    name: MAL Client Secret
+    required: false
+    sensitive: true
+    description: MyAnimeList API app Client Secret (Web app type only)
 ```
+
+> ⚠️ **Env-provisioned tokens mean ONE shared MAL account.** With
+> `serverUserType: multiUser` the admin configures the env values once and every user of
+> this registration talks to the token owner's private MAL list (scores, watch history,
+> plan_to_watch/dropped) and shares that account's rate limit. Use env tokens only for a
+> personal / single-operator gateway. For a multi-person gateway, register the server as
+> single-user so each user supplies their own `MAL_REFRESH_TOKEN`, or use a Remote
+> registration where each user sends their own `Authorization` header (which always takes
+> precedence over env tokens).
 
 ### Getting the token to the server — current reality (read this)
 
@@ -119,14 +142,17 @@ not care who put it there. As of Obot v0.23.x there is a real incompatibility to
 
 Working options, in order of practicality:
 
-1. **User-supplied token (works today).** Give the server the token you obtained manually
-   (below). For the **Containerized** runtime Obot passes user credentials as environment
-   variables, so declare a `MAL_ACCESS_TOKEN` env field (required + sensitive) and paste the
-   access token there — the server falls back to it whenever a request carries no
-   `Authorization` header. For a **Remote** registration, a user-supplied `Authorization`
-   header (`Bearer <token>`) works the same way and takes precedence over the env var.
-   Downside: MAL access tokens last ~31 days in practice; re-paste a fresh token when it
-   expires.
+1. **Self-renewing refresh token (recommended — set up once).** Run the manual flow below
+   ONCE and keep the `refresh_token` from its output. Provision three env fields on the
+   containerized server: `MAL_REFRESH_TOKEN`, `MAL_CLIENT_ID`, and `MAL_CLIENT_SECRET`
+   (omit the secret for non-Web public clients). The server then mints and renews access
+   tokens itself before they expire — no monthly re-pasting. Rotated tokens live in memory
+   only; MAL keeps previously issued refresh tokens valid after rotation (verified
+   empirically), so the env value keeps working across container restarts.
+2. **Static access token (quick test).** Set `MAL_ACCESS_TOKEN` instead — simplest possible
+   wiring, but MAL access tokens last ~31 days in practice, after which you must paste a
+   fresh one. For a **Remote** registration, a user-supplied `Authorization` header
+   (`Bearer <token>`) works too and always takes precedence over env-based tokens.
 2. **A bridging OAuth proxy** in front of this server that speaks the MCP auth spec toward
    Obot and `plain` PKCE toward MAL. Out of scope for this repository.
 3. **Static OAuth, later.** If Obot gains configurable/`plain` PKCE (or MAL gains `S256` +
@@ -155,7 +181,8 @@ curl -s https://myanimelist.net/v1/oauth2/token \
 # → {"token_type":"Bearer","expires_in":2678400,"access_token":"...","refresh_token":"..."}
 ```
 
-Use the `access_token` value as the Bearer token.
+Keep the **`refresh_token`** — that is what goes into `MAL_REFRESH_TOKEN` for the
+set-up-once option; the `access_token` is what you'd use for the static/header options.
 
 ## Running locally
 
@@ -171,7 +198,13 @@ uv run python -m mal_mcp.server  # serves http://0.0.0.0:8000/mcp (streamable-ht
 |----------|---------|---------|
 | `PORT` | `8000` | HTTP listen port |
 | `HOST` | `0.0.0.0` | Bind address |
-| `MAL_ACCESS_TOKEN` | *(unset)* | Fallback MAL access token, used only when a request carries no `Authorization` header (Obot containerized runtime delivers user credentials as env vars). Never written anywhere by the server. |
+| `MAL_REFRESH_TOKEN` | *(unset)* | Enables self-renewing tokens: the server mints/renews access tokens via the `refresh_token` grant (requires `MAL_CLIENT_ID`). In-memory only. |
+| `MAL_CLIENT_ID` | *(unset)* | MAL app Client ID, needed for the refresh grant. |
+| `MAL_CLIENT_SECRET` | *(unset)* | MAL app Client Secret — required for "Web"-type apps, omit for public clients. |
+| `MAL_ACCESS_TOKEN` | *(unset)* | Static fallback access token (expires ~31 days). Used only when no `Authorization` header arrives and no refresh setup exists. |
+
+Token precedence per request: `Authorization` header → refresh-token manager → `MAL_ACCESS_TOKEN`.
+The server never writes any of these anywhere.
 
 ### Test with MCP Inspector
 

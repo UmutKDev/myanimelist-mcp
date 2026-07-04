@@ -1,15 +1,18 @@
 """Unit tests for the pure helpers in mal_mcp.server (no network)."""
 
+import asyncio
+
 import pytest
 from fastmcp.exceptions import ToolError
 
+import mal_mcp.server as server
 from mal_mcp.server import (
-    _bearer_token,
     _compact_detail,
     _compact_entry,
     _compact_search_result,
     _compute_stats,
     _format_taste,
+    _resolve_token,
 )
 
 RAW_EDGE = {
@@ -219,18 +222,54 @@ class TestSearchAndDetailCompaction:
         assert "my_list_status" not in _compact_detail({"id": 1, "title": "X"})
 
 
-class TestBearerToken:
-    def test_missing_token_raises_actionable_error(self, monkeypatch):
-        # Outside an HTTP request get_http_headers() returns {}; with no env fallback
-        # either, this must surface as a clear ToolError.
-        monkeypatch.delenv("MAL_ACCESS_TOKEN", raising=False)
+class _FakeManager:
+    def __init__(self, token="managed-token"):
+        self.token = token
+        self.invalidated = 0
+
+    async def get_token(self):
+        return self.token
+
+    def invalidate(self):
+        self.invalidated += 1
+
+
+@pytest.fixture()
+def clean_token_env(monkeypatch):
+    # Outside an HTTP request get_http_headers() returns {}, so these control everything.
+    for var in ("MAL_ACCESS_TOKEN", "MAL_REFRESH_TOKEN", "MAL_CLIENT_ID", "MAL_CLIENT_SECRET"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(server, "_TOKEN_MANAGER", None)
+    return monkeypatch
+
+
+class TestResolveToken:
+    def test_missing_everything_raises_actionable_error(self, clean_token_env):
         with pytest.raises(ToolError, match="No MAL access token"):
-            _bearer_token()
+            asyncio.run(_resolve_token())
 
-    def test_env_fallback_used_when_no_header(self, monkeypatch):
-        monkeypatch.setenv("MAL_ACCESS_TOKEN", "env-token-123")
-        assert _bearer_token() == "env-token-123"
+    def test_static_env_fallback(self, clean_token_env):
+        clean_token_env.setenv("MAL_ACCESS_TOKEN", "env-token-123")
+        token, manager = asyncio.run(_resolve_token())
+        assert token == "env-token-123"
+        assert manager is None
 
-    def test_env_fallback_strips_bearer_prefix(self, monkeypatch):
-        monkeypatch.setenv("MAL_ACCESS_TOKEN", "Bearer env-token-123")
-        assert _bearer_token() == "env-token-123"
+    def test_static_env_strips_bearer_prefix(self, clean_token_env):
+        clean_token_env.setenv("MAL_ACCESS_TOKEN", "Bearer env-token-123")
+        token, _ = asyncio.run(_resolve_token())
+        assert token == "env-token-123"
+
+    def test_credentialless_bearer_is_not_a_token(self, clean_token_env):
+        # "Authorization: Bearer" (scheme only) must not shadow the env fallback.
+        assert server._strip_bearer("Bearer") == ""
+        assert server._strip_bearer("bearer  ") == ""
+        clean_token_env.setenv("MAL_ACCESS_TOKEN", "Bearer")
+        with pytest.raises(ToolError, match="No MAL access token"):
+            asyncio.run(_resolve_token())
+
+    def test_manager_preferred_over_static_env(self, clean_token_env):
+        clean_token_env.setenv("MAL_ACCESS_TOKEN", "static-token")
+        clean_token_env.setattr(server, "_TOKEN_MANAGER", _FakeManager("managed-token"))
+        token, manager = asyncio.run(_resolve_token())
+        assert token == "managed-token"
+        assert manager is not None
