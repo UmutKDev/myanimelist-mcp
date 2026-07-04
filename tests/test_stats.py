@@ -220,8 +220,17 @@ class TestSearchAndDetailCompaction:
 
 
 class TestBearerToken:
-    def test_missing_http_context_raises_actionable_error(self):
-        # Outside an HTTP request get_http_headers() returns {}, which must surface
-        # as a clear ToolError about the missing Authorization header.
-        with pytest.raises(ToolError, match="Missing Authorization header"):
+    def test_missing_token_raises_actionable_error(self, monkeypatch):
+        # Outside an HTTP request get_http_headers() returns {}; with no env fallback
+        # either, this must surface as a clear ToolError.
+        monkeypatch.delenv("MAL_ACCESS_TOKEN", raising=False)
+        with pytest.raises(ToolError, match="No MAL access token"):
             _bearer_token()
+
+    def test_env_fallback_used_when_no_header(self, monkeypatch):
+        monkeypatch.setenv("MAL_ACCESS_TOKEN", "env-token-123")
+        assert _bearer_token() == "env-token-123"
+
+    def test_env_fallback_strips_bearer_prefix(self, monkeypatch):
+        monkeypatch.setenv("MAL_ACCESS_TOKEN", "Bearer env-token-123")
+        assert _bearer_token() == "env-token-123"

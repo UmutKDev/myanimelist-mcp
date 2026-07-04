@@ -31,20 +31,26 @@ SortOrder = Literal["list_score", "list_updated_at", "anime_title", "anime_start
 
 
 def _bearer_token() -> str:
-    """Extract the MAL access token from the incoming request's Authorization header."""
+    """Extract the MAL access token: Authorization header first, env var fallback second."""
     # fastmcp 3.x strips 'authorization' from get_http_headers() unless re-included.
     headers = get_http_headers(include={"authorization"})
     auth = headers.get("authorization", "").strip()
     if not auth:
+        # Obot's containerized runtime delivers user-supplied credentials as env vars
+        # rather than headers, so accept MAL_ACCESS_TOKEN as a fallback. The value is
+        # read per call and never written anywhere.
+        auth = os.getenv("MAL_ACCESS_TOKEN", "").strip()
+    if not auth:
         raise ToolError(
-            "Missing Authorization header. This server expects the MCP gateway (e.g. Obot) to "
-            "forward 'Authorization: Bearer <MAL access token>' with every request - check the "
-            "gateway's OAuth/header configuration."
+            "No MAL access token. Either the gateway must forward "
+            "'Authorization: Bearer <MAL access token>' with the request, or the "
+            "MAL_ACCESS_TOKEN environment variable must be set (e.g. Obot's containerized "
+            "'env' field). Check the gateway configuration."
         )
     if auth.lower().startswith("bearer "):
         auth = auth[len("bearer ") :].strip()
     if not auth:
-        raise ToolError("Authorization header is present but contains no token.")
+        raise ToolError("An Authorization value is present but contains no token.")
     return auth
 
 

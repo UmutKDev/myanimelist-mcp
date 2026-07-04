@@ -85,6 +85,9 @@ Build and push the image (see [Docker](#docker) below), then in the Obot admin U
 | Port  | `8000` |
 | Path  | `/mcp` |
 
+In the same form, add an environment field so each user can paste their MAL token
+(see "Getting the token to the server" below): key `MAL_ACCESS_TOKEN`, required, sensitive.
+
 Or as a catalog entry:
 
 ```yaml
@@ -95,6 +98,12 @@ containerizedConfig:
   image: ghcr.io/umutkdev/myanimelist-mcp:latest
   port: 8000
   path: /mcp
+env:
+  - key: MAL_ACCESS_TOKEN
+    name: MAL Access Token
+    required: true
+    sensitive: true
+    description: MyAnimeList OAuth access token (obtained manually; see README)
 ```
 
 ### Getting the token to the server — current reality (read this)
@@ -110,10 +119,14 @@ not care who put it there. As of Obot v0.23.x there is a real incompatibility to
 
 Working options, in order of practicality:
 
-1. **User-supplied Authorization header (works today).** Register the server with a
-   required, sensitive header/env the user fills with `Bearer <access token>` obtained
-   manually (below). Downside: MAL access tokens last ~31 days in practice; the user
-   re-pastes a fresh token when it expires.
+1. **User-supplied token (works today).** Give the server the token you obtained manually
+   (below). For the **Containerized** runtime Obot passes user credentials as environment
+   variables, so declare a `MAL_ACCESS_TOKEN` env field (required + sensitive) and paste the
+   access token there — the server falls back to it whenever a request carries no
+   `Authorization` header. For a **Remote** registration, a user-supplied `Authorization`
+   header (`Bearer <token>`) works the same way and takes precedence over the env var.
+   Downside: MAL access tokens last ~31 days in practice; re-paste a fresh token when it
+   expires.
 2. **A bridging OAuth proxy** in front of this server that speaks the MCP auth spec toward
    Obot and `plain` PKCE toward MAL. Out of scope for this repository.
 3. **Static OAuth, later.** If Obot gains configurable/`plain` PKCE (or MAL gains `S256` +
@@ -152,7 +165,13 @@ uv run pytest                    # unit tests (pure helpers, no network)
 uv run python -m mal_mcp.server  # serves http://0.0.0.0:8000/mcp (streamable-http)
 ```
 
-`PORT` and `HOST` environment variables override the defaults (8000 / 0.0.0.0).
+### Environment variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PORT` | `8000` | HTTP listen port |
+| `HOST` | `0.0.0.0` | Bind address |
+| `MAL_ACCESS_TOKEN` | *(unset)* | Fallback MAL access token, used only when a request carries no `Authorization` header (Obot containerized runtime delivers user credentials as env vars). Never written anywhere by the server. |
 
 ### Test with MCP Inspector
 
