@@ -179,6 +179,149 @@ class TestErrorMapping:
             _run(_fetch_list_with(handler))
 
 
+class TestUserListsAndQuoting:
+    def test_username_is_path_quoted(self):
+        seen = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.url.raw_path.decode())
+            return _json_response({"data": [], "paging": {}})
+
+        async def go():
+            async with MALClient("tok", transport=httpx.MockTransport(handler)) as c:
+                await c.get_anime_list_page(user_name="evil/user?x=1")
+                await c.get_manga_list_page(user_name="normaluser")
+
+        _run(go())
+        # The username must be escaped into a single path segment.
+        assert seen[0].startswith("/v2/users/evil%2Fuser%3Fx%3D1/animelist")
+        assert seen[1].startswith("/v2/users/normaluser/mangalist")
+
+    def test_whitespace_username_rejected_before_any_request(self):
+        def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+            raise AssertionError("no request should be sent")
+
+        async def go():
+            async with MALClient("tok", transport=httpx.MockTransport(handler)) as c:
+                await c.get_anime_list_page(user_name="   ")
+
+        with pytest.raises(MALAPIError, match="Username must not be empty"):
+            _run(go())
+
+    def test_private_list_403_fails_fast_with_clear_message(self):
+        calls = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(1)
+            return _json_response({"error": "forbidden", "message": ""}, 403)
+
+        async def go():
+            async with MALClient("tok", transport=httpx.MockTransport(handler)) as c:
+                await c.get_anime_list_page(user_name="someone")
+
+        with pytest.raises(MALAPIError, match="private"):
+            _run(go())
+        assert len(calls) == 1  # deterministic 403 is not retried for user lists
+
+    def test_unexpected_redirect_is_an_error_not_success(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(301, headers={"location": "https://example.com/"})
+
+        async def go():
+            async with MALClient("tok", transport=httpx.MockTransport(handler)) as c:
+                await c.delete_anime_list_status(30)
+
+        with pytest.raises(MALAPIError, match="redirect"):
+            _run(go())
+
+    def test_manga_list_page_params(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            params = dict(request.url.params)
+            assert params["status"] == "reading"
+            assert params["sort"] == "list_score"
+            assert "authors{first_name,last_name}" in params["fields"]
+            return _json_response({"data": [], "paging": {"next": "x"}})
+
+        async def go():
+            async with MALClient("tok", transport=httpx.MockTransport(handler)) as c:
+                return await c.get_manga_list_page(status="reading", sort="list_score")
+
+        edges, has_more = _run(go())
+        assert has_more is True
+
+
+class TestDiscoveryEndpoints:
+    def test_ranking_and_seasonal_params(self):
+        seen = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append((request.url.path, dict(request.url.params)))
+            return _json_response({"data": [], "paging": {}})
+
+        async def go():
+            async with MALClient("tok", transport=httpx.MockTransport(handler)) as c:
+                await c.get_anime_ranking("airing", limit=9999)  # clamped to 500
+                await c.get_manga_ranking("manhwa", limit=5, offset=10)
+                await c.get_seasonal_anime(2026, "summer", sort="anime_score")
+                await c.get_suggested_anime(limit=200)  # clamped to 100
+
+        _run(go())
+        assert seen[0][0].endswith("/anime/ranking")
+        assert seen[0][1]["ranking_type"] == "airing" and seen[0][1]["limit"] == "500"
+        assert seen[1][1]["ranking_type"] == "manhwa" and seen[1][1]["offset"] == "10"
+        assert seen[2][0].endswith("/anime/season/2026/summer")
+        assert seen[2][1]["sort"] == "anime_score"
+        assert seen[3][0].endswith("/anime/suggestions") and seen[3][1]["limit"] == "100"
+
+
+class TestWriteEndpoints:
+    def test_patch_sends_only_given_fields_form_encoded(self):
+        seen = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["path"] = request.url.path
+            seen["content_type"] = request.headers.get("content-type", "")
+            seen["body"] = request.content.decode()
+            return _json_response({"status": "watching", "score": 8})
+
+        async def go():
+            async with MALClient("tok", transport=httpx.MockTransport(handler)) as c:
+                return await c.update_anime_list_status(
+                    30, {"status": "watching", "score": 8, "is_rewatching": "false"}
+                )
+
+        result = _run(go())
+        assert seen["method"] == "PATCH"
+        assert seen["path"].endswith("/anime/30/my_list_status")
+        assert "application/x-www-form-urlencoded" in seen["content_type"]
+        assert "status=watching" in seen["body"] and "score=8" in seen["body"]
+        assert "num_watched_episodes" not in seen["body"]  # only given fields
+        assert result["score"] == 8
+
+    def test_delete_handles_empty_body_and_404(self):
+        calls = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request.method)
+            if len(calls) == 1:
+                return httpx.Response(200, json=[])  # observed live: DELETE answers []
+            return _json_response({"error": "not_found", "message": ""}, 404)
+
+        async def go_ok():
+            async with MALClient("tok", transport=httpx.MockTransport(handler)) as c:
+                await c.delete_anime_list_status(30)
+
+        _run(go_ok())  # must not raise despite the empty body
+
+        async def go_missing():
+            async with MALClient("tok", transport=httpx.MockTransport(handler)) as c:
+                await c.delete_manga_list_status(2)
+
+        with pytest.raises(MALAPIError, match="not on the user's list"):
+            _run(go_missing())
+
+
 class TestRequestShape:
     def test_bearer_header_and_fields_sent_on_search_and_detail(self):
         captured = []

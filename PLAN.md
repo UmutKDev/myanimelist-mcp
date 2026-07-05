@@ -55,6 +55,17 @@ All tools are read-only (`readOnlyHint: true`) and take the MAL token from the r
   small summary header + entries grouped by status, sorted by user score, one pipe-separated line
   each: `my_score|title|year|type|watched/total|genres|mal_mean`.
 
+### v0.3.0 additions (14 tools; same patterns, see README for the full table)
+- Manga: `search_manga`, `get_manga_detail`, `get_my_manga_list` (chapter/volume progress,
+  authors, serialization).
+- Discovery: `get_anime_ranking`, `get_manga_ranking`, `get_seasonal_anime`,
+  `get_suggested_anime` (MAL's personalized suggestions; user token only).
+- Users: `get_my_profile` (@me only per MAL), `get_user_anime_list` / `get_user_manga_list`
+  (public lists of arbitrary usernames; usernames path-quoted).
+- Writes (user token only): `update_my_anime_entry` / `update_my_manga_entry` (PATCH, only
+  provided fields, creates entry when absent) and `delete_my_anime_entry` /
+  `delete_my_manga_entry` (destructiveHint: true; MAL delete is idempotent in practice).
+
 ## mal_client.py
 
 - `MALError` → base; `MALTokenError` (401), `MALAPIError` (everything else).

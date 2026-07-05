@@ -34,6 +34,8 @@ MCP client (Claude) ──> Obot gateway ──> mal-mcp (this server) ──> M
 
 ## Tools
 
+**Anime**
+
 | Tool | Description |
 |------|-------------|
 | `get_my_anime_list(status_filter?, sort?, limit=100, offset=0)` | A page of the user's list (bounded; `has_more` + `offset` for paging): title, watch status, score, episode progress, genres, community mean, studios. |
@@ -41,6 +43,40 @@ MCP client (Claude) ──> Obot gateway ──> mal-mcp (this server) ──> M
 | `search_anime(query, limit=10)` | Public catalog search (compact results, truncated synopsis). |
 | `get_anime_detail(anime_id)` | Full public detail incl. related anime, recommendations, statistics, and the user's own list entry if present. |
 | `analyze_taste()` | Token-efficient raw export of the whole list (grouped by status, sorted by score) for the calling model to analyze — this tool itself performs **no** analysis. |
+
+**Manga**
+
+| Tool | Description |
+|------|-------------|
+| `search_manga(query, limit=10)` | Public manga catalog search (chapters/volumes, authors, genres). |
+| `get_manga_detail(manga_id)` | Full manga detail incl. authors, serialization magazines, related works, recommendations, and the user's own entry if present. |
+| `get_my_manga_list(status_filter?, sort?, limit=100, offset=0)` | A page of the user's manga list with chapter/volume progress. |
+
+**Discovery**
+
+| Tool | Description |
+|------|-------------|
+| `get_anime_ranking(ranking_type, limit=25)` | MAL's official rankings: all, airing, upcoming, tv, ova, movie, special, bypopularity, favorite. |
+| `get_manga_ranking(ranking_type, limit=25)` | Manga rankings: all, manga, novels, oneshots, doujin, manhwa, manhua, bypopularity, favorite. |
+| `get_seasonal_anime(year, season, sort?, limit=25)` | Anime of one broadcast season (winter/spring/summer/fall). |
+| `get_suggested_anime(limit=25)` | MAL's personalized suggestions for the authenticated user. |
+
+**Users**
+
+| Tool | Description |
+|------|-------------|
+| `get_my_profile()` | The authenticated user's profile + lifetime anime statistics. MAL exposes this only for `@me`. |
+| `get_user_anime_list(user_name, ...)` | Another user's **public** anime list (403 usually = private list or unknown user). |
+| `get_user_manga_list(user_name, ...)` | Another user's **public** manga list. |
+
+**Write tools — these modify the user's MAL list**
+
+| Tool | Description |
+|------|-------------|
+| `update_my_anime_entry(anime_id, ...)` | Update score/status/episode progress/tags of a list entry — or add the anime to the list (MAL creates the entry if absent). Only provided fields change. |
+| `delete_my_anime_entry(anime_id)` | **Permanently** remove an anime from the list (score/progress/tags are lost; cannot be undone). |
+| `update_my_manga_entry(manga_id, ...)` | Same as the anime variant, with chapter/volume progress. |
+| `delete_my_manga_entry(manga_id)` | **Permanently** remove a manga from the list. |
 
 Aggregate tools (`get_user_stats`, `analyze_taste`) fetch the entire list in one paginated
 pass (safety cap: 20,000 entries — beyond that a `truncated`/WARNING marker is included).

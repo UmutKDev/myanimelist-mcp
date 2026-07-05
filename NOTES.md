@@ -47,6 +47,39 @@ fastmcp 3.4.2 source code, and Obot docs + source (obot, nanobot, mcp-catalog, m
 - `average_episode_duration` is in **seconds**; `num_episodes` is 0 when unknown; `mean`, `rank`,
   `popularity` are nullable. Dates may be partial ("2017", "2017-10").
 
+### Manga, discovery, users, writes (verified 2026-07-05, official OpenAPI spec + live tests)
+
+- `GET /manga?q=` — limit max **100**; fields incl. `num_chapters`, `num_volumes` (0 = unknown/
+  ongoing), `authors{first_name,last_name}` (nested-fields syntax; response shape
+  `[{node:{id,first_name,last_name}, role}]`), `media_type`, `status`
+  (finished|currently_publishing), `mean`, `genres`.
+- `GET /manga/{id}` — detail-only extras: `pictures, background, related_anime, related_manga,
+  recommendations, serialization{name}`; `my_list_status` with user token + fields.
+- `GET /users/{user_name}/mangalist` — status `reading|completed|on_hold|dropped|plan_to_read`;
+  sort `list_score|list_updated_at|manga_title|manga_start_date`; limit max **1000**;
+  list_status: `num_chapters_read`, `num_volumes_read`, `is_rereading`, `num_times_reread`,
+  `reread_value`, plus the shared fields. Arbitrary usernames = public lists (live-verified).
+- `GET /users/{user_name}/animelist` also accepts arbitrary usernames (live-verified with a
+  public account). 403 can mean private list or unknown user — error message says so.
+- `GET /anime/ranking` — ranking_type `all|airing|upcoming|tv|ova|movie|special|bypopularity|
+  favorite`; limit max **500**; items are `{node, ranking:{rank, previous_rank?}}`.
+- `GET /manga/ranking` — ranking_type `all|manga|novels|oneshots|doujin|manhwa|manhua|
+  bypopularity|favorite`; limit max **500**.
+- `GET /anime/season/{year}/{season}` — season `winter|spring|summer|fall`; sort
+  `anime_score|anime_num_list_users`; limit max **500**.
+- `GET /anime/suggestions` — limit max **100**; user OAuth token ONLY.
+- `GET /users/@me` — user token only; official docs allow only `@me` here. `fields=
+  anime_statistics,time_zone,is_supporter` adds stats (num_items_*, num_days_*, num_episodes,
+  num_times_rewatched, mean_score) to the default id/name/picture/birthday/location/joined_at.
+- **Writes** (user token only): `PATCH /anime/{id}/my_list_status` and
+  `PATCH /manga/{id}/my_list_status`, body form-encoded; only sent fields change; **creates the
+  entry when absent** (live-verified). Params: status, score 0-10, priority 0-2,
+  num_watched_episodes / num_chapters_read+num_volumes_read, is_rewatching/is_rereading,
+  num_times_rewatched/num_times_reread, rewatch_value/reread_value 0-5, tags, comments.
+- `DELETE .../my_list_status` — live-observed: 200 with body `[]` (not an object!), and
+  **idempotent in practice** (deleting an absent entry also returns 200, despite docs saying
+  404); 404 does occur for unknown ids. Client treats non-dict 2xx bodies on non-GET as success.
+
 ## MAL OAuth2 (for the Obot/README side only — no OAuth code in this server)
 
 - Authorize: `https://myanimelist.net/v1/oauth2/authorize`
