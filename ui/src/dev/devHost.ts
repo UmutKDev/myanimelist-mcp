@@ -31,6 +31,9 @@ export async function devCallTool<T>(name: string, args: Record<string, unknown>
   if (name === "get_my_profile") {
     return { view: "dashboard", profile: (FIXTURES.dashboard as { profile?: unknown }).profile } as T;
   }
+  if (name === "get_weekly_schedule") {
+    return FIXTURES.schedule as T;
+  }
   const paged = FIXTURES[name.includes("ranking") ? "ranking" : "search"];
   return paged as T;
 }

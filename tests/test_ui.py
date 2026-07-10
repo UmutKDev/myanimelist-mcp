@@ -22,6 +22,7 @@ UI_TOOLS = {
     "get_manga_ranking",
     "get_seasonal_anime",
     "get_suggested_anime",
+    "get_weekly_schedule",
     "get_my_profile",
     "get_user_anime_list",
     "get_user_manga_list",

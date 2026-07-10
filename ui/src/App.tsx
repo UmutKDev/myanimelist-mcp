@@ -20,6 +20,7 @@ import { DetailHero } from "./views/DetailHero";
 import { Rankings } from "./views/Rankings";
 import { SeasonalGrid } from "./views/SeasonalGrid";
 import { Dashboard } from "./views/Dashboard";
+import { ScheduleView } from "./views/ScheduleView";
 import { SkeletonGrid } from "./components/SkeletonGrid";
 import { EmptyState } from "./components/EmptyState";
 
@@ -39,12 +40,22 @@ function renderView(payload: ViewPayload) {
       return <SeasonalGrid payload={payload} />;
     case "dashboard":
       return <Dashboard payload={payload} />;
+    case "schedule":
+      return <ScheduleView payload={payload} />;
     default:
       return <EmptyState message="This tool has no visual view yet." />;
   }
 }
 
-const DEV_VIEWS = ["search", "detail", "list", "ranking", "seasonal", "dashboard"] as const;
+const DEV_VIEWS = [
+  "search",
+  "detail",
+  "list",
+  "schedule",
+  "ranking",
+  "seasonal",
+  "dashboard",
+] as const;
 
 export default function App() {
   const [payload, setPayload] = useState<ViewPayload | null>(

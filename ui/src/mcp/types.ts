@@ -214,13 +214,39 @@ export interface DashboardPayload {
   stats?: StatsData;
 }
 
+export interface ScheduleEntry {
+  id: number;
+  title: string;
+  picture: string | null;
+  media_type: string | null;
+  airing_status: string | null;
+  my_score: number;
+  episodes_watched: number;
+  total_episodes: number;
+  broadcast_time: string | null;
+}
+
+export interface ScheduleDay {
+  day: string; // "monday".."sunday" | "unscheduled"
+  entries: ScheduleEntry[];
+}
+
+export interface SchedulePayload {
+  view: "schedule";
+  timezone: string;
+  today: string;
+  total: number;
+  days: ScheduleDay[];
+}
+
 export type ViewPayload =
   | SearchPayload
   | ListPayload
   | DetailPayload
   | RankingPayload
   | SeasonalPayload
-  | DashboardPayload;
+  | DashboardPayload
+  | SchedulePayload;
 
 /** Result shape of the update_my_*_entry tools (used for optimistic edits). */
 export interface UpdateResult {

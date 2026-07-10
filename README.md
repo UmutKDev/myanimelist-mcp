@@ -19,6 +19,8 @@ travels to the iframe as structured content.
 
 ![Detail — hero page with score ring, synopsis, and inline list editing](docs/screenshots/detail.png)
 
+![Weekly schedule — your currently-airing watching list, grouped by broadcast day, today highlighted](docs/screenshots/schedule.png)
+
 <table>
   <tr>
     <td width="50%"><img src="docs/screenshots/list.png" alt="List browser with status tabs, filter/sort, and inline editing"></td>
@@ -60,6 +62,7 @@ model's back. The theme follows the host's light/dark mode; cover art loads from
 | `get_manga_ranking(ranking_type, limit=25)` | Manga rankings: all, manga, novels, oneshots, doujin, manhwa, manhua, bypopularity, favorite. |
 | `get_seasonal_anime(year, season, sort?, limit=25)` | Anime of one broadcast season (winter/spring/summer/fall). |
 | `get_suggested_anime(limit=25)` | MAL's personalized suggestions for the authenticated user. |
+| `get_weekly_schedule(timezone?)` | Your personal weekly airing calendar: the currently-airing anime on your `watching` list, grouped by broadcast day. JST by default, or converted to any IANA `timezone`. |
 
 **Users**
 
@@ -181,7 +184,7 @@ via the env vars above.
 
 ```
 src/mal_mcp/
-├── server.py       # FastMCP app, token helper, 19 tools, stats/format/summary helpers
+├── server.py       # FastMCP app, token helper, 20 tools, stats/format/summary helpers
 ├── mal_client.py   # MAL API wrapper: fields, pagination (paging.next), retries, error mapping
 ├── token_manager.py# self-renewing OAuth refresh_token grant (in-memory)
 └── ui/             # MCP Apps layer: ui:// resource + meta/ToolResult helpers

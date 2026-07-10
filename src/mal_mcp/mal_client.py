@@ -19,7 +19,8 @@ MAL_API_BASE = "https://api.myanimelist.net/v2"
 # and reused (no per-anime requests - MAL rate limiting is aggressive and undocumented).
 LIST_FIELDS = (
     "list_status,num_episodes,genres,mean,media_type,status,"
-    "start_season,average_episode_duration,studios,rating,main_picture"
+    "start_season,average_episode_duration,studios,rating,main_picture,"
+    "broadcast"
 )
 SEARCH_FIELDS = "mean,genres,media_type,num_episodes,status,start_season,synopsis,main_picture"
 DETAIL_FIELDS = (

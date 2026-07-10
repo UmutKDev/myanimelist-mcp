@@ -18,7 +18,9 @@ import os
 import statistics
 from collections import Counter, defaultdict
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta
 from typing import Annotated, Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
@@ -529,6 +531,121 @@ def _build_changes(**kwargs: Any) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Weekly schedule helpers (unit-tested in tests/test_schedule.py)
+# ---------------------------------------------------------------------------
+
+JST = ZoneInfo("Asia/Tokyo")  # MAL broadcast times are Japan Standard Time
+WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+
+def _resolve_timezone(name: str | None) -> ZoneInfo | None:
+    """Resolve an IANA timezone name; None means 'keep MAL's native JST'."""
+    if not name:
+        return None
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ToolError(
+            f"Unknown timezone '{name}'. Use an IANA name like 'Europe/Istanbul' or "
+            "'America/New_York', or omit it to see MAL's native JST times."
+        ) from exc
+
+
+def _parse_hhmm(value: Any) -> tuple[int, int] | None:
+    """Parse MAL's 'HH:MM' broadcast time; tolerates late-night hours like '25:00'."""
+    if not isinstance(value, str) or ":" not in value:
+        return None
+    hh, _, mm = value.partition(":")
+    if not (hh.strip().isdigit() and mm.strip().isdigit()):
+        return None
+    minute = int(mm)
+    if minute >= 60:
+        return None
+    return int(hh), minute
+
+
+def _convert_broadcast(
+    day: Any, start_time: Any, target_tz: ZoneInfo | None, *, now: datetime
+) -> tuple[str | None, str | None]:
+    """Map a JST (weekday, 'HH:MM') broadcast slot into ``target_tz``.
+
+    Returns ``(weekday, 'HH:MM')`` in the target zone, or the JST values when
+    ``target_tz`` is None. ``now`` (a tz-aware datetime) anchors which week's
+    occurrence is used, so late-night times that cross midnight land on the right
+    day; it is injected for deterministic tests. Returns ``(None, None)`` when the
+    slot cannot be placed (no/invalid weekday).
+    """
+    if day not in WEEKDAYS:
+        return None, None
+    parsed = _parse_hhmm(start_time)
+    if parsed is None:
+        return day, None  # known day, unknown time (rare)
+    hour, minute = parsed
+    extra_days, hour = divmod(hour, 24)  # normalize '25:00' -> +1 day, 01:00
+    jst_now = now.astimezone(JST)
+    delta = (WEEKDAYS.index(day) - jst_now.weekday()) % 7
+    slot = jst_now.replace(hour=hour, minute=minute, second=0, microsecond=0) + timedelta(
+        days=delta + extra_days
+    )
+    local = slot if target_tz is None else slot.astimezone(target_tz)
+    return WEEKDAYS[local.weekday()], f"{local.hour:02d}:{local.minute:02d}"
+
+
+def _schedule_entry(
+    edge: dict[str, Any], target_tz: ZoneInfo | None, *, now: datetime
+) -> dict[str, Any] | None:
+    """Build one schedule row from a watching-list edge, or None if not airing now."""
+    node = edge.get("node") or {}
+    if node.get("status") != "currently_airing":
+        return None
+    ls = edge.get("list_status") or {}
+    broadcast = node.get("broadcast") or {}
+    day, when = _convert_broadcast(
+        broadcast.get("day_of_the_week"), broadcast.get("start_time"), target_tz, now=now
+    )
+    return {
+        "id": node.get("id"),
+        "title": node.get("title"),
+        "picture": _picture(node),
+        "media_type": node.get("media_type"),
+        "airing_status": node.get("status"),
+        "my_score": ls.get("score") or 0,
+        "episodes_watched": ls.get("num_episodes_watched") or 0,
+        "total_episodes": node.get("num_episodes") or 0,
+        "broadcast_time": when,
+        "day": day,  # None -> unscheduled bucket
+    }
+
+
+def _build_schedule(
+    edges: list[dict[str, Any]], target_tz: ZoneInfo | None, *, now: datetime
+) -> tuple[list[dict[str, Any]], int]:
+    """Group currently-airing watching entries into Mon->Sun (+ 'unscheduled')."""
+    buckets: dict[str, list[dict[str, Any]]] = {d: [] for d in WEEKDAYS}
+    unscheduled: list[dict[str, Any]] = []
+    for edge in edges:
+        entry = _schedule_entry(edge, target_tz, now=now)
+        if entry is None:
+            continue
+        day = entry.pop("day")
+        if day in buckets:
+            buckets[day].append(entry)
+        else:
+            entry["broadcast_time"] = None
+            unscheduled.append(entry)
+
+    def _key(row: dict[str, Any]) -> tuple[bool, str]:
+        t = row["broadcast_time"]
+        return (t is None, t or "")  # timed shows first, sorted by time
+
+    days = [{"day": d, "entries": sorted(buckets[d], key=_key)} for d in WEEKDAYS]
+    if unscheduled:
+        days.append({"day": "unscheduled", "entries": unscheduled})
+    total = sum(len(d["entries"]) for d in days)
+    return days, total
+
+
+# ---------------------------------------------------------------------------
 # Model-facing summaries for UI tools (the full payload goes to the app as
 # structuredContent; these keep the model's context slim - ids are preserved
 # so the model can chain into detail/update tools).
@@ -678,6 +795,27 @@ def _summarize_stats(stats: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _summarize_schedule(
+    days: list[dict[str, Any]], total: int, tz_label: str, today: str
+) -> str:
+    if total == 0:
+        return (
+            "Weekly airing schedule: no currently-airing anime on your watching list "
+            "(nothing to broadcast this week)."
+        )
+    lines = [f"My weekly airing schedule - {total} show(s), times in {tz_label} (today: {today})"]
+    for group in days:
+        if not group["entries"]:
+            continue
+        marker = " <- today" if group["day"] == today else ""
+        lines.append(f"[{group['day']}{marker}]")
+        for e in group["entries"]:
+            when = e["broadcast_time"] or "--:--"
+            progress = f"{e['episodes_watched']}/{e['total_episodes'] or '?'}"
+            lines.append(f"  {when} {e['title']} (ep {progress}, id {e['id']})")
+    return "\n".join(lines)
+
+
 def _summarize_profile(profile: dict[str, Any]) -> str:
     lines = [f"MAL profile: {profile.get('name')} (id {profile.get('id')})"]
     joined = profile.get("joined_at") or ""
@@ -714,6 +852,25 @@ async def _fetch_compact_list() -> tuple[list[dict[str, Any]], bool]:
     """
     edges, truncated = await _call_mal(lambda client: client.get_anime_list())
     return [_compact_entry(edge) for edge in edges], truncated
+
+
+async def _fetch_watching_edges() -> list[dict[str, Any]]:
+    """Fetch every 'watching' entry (raw edges) - small lists page in one request."""
+
+    async def op(client: MALClient) -> list[dict[str, Any]]:
+        edges: list[dict[str, Any]] = []
+        offset = 0
+        for _ in range(20):  # defensive cap; a watching list never nears 20k entries
+            page, has_more = await client.get_anime_list_page(
+                status="watching", limit=1000, offset=offset
+            )
+            edges.extend(page)
+            if not has_more:
+                break
+            offset += len(page)
+        return edges
+
+    return await _call_mal(op)
 
 
 @mcp.tool(
@@ -1127,6 +1284,45 @@ async def get_suggested_anime(
             "results": results,
         },
         _summarize_search("anime", results, None),
+    )
+
+
+@mcp.tool(
+    annotations={"title": "Get Weekly Schedule", "readOnlyHint": True, "openWorldHint": True},
+    meta=ui_tool_meta(),
+)
+async def get_weekly_schedule(
+    timezone: Annotated[
+        str | None,
+        Field(
+            description="IANA timezone name (e.g. 'Europe/Istanbul', 'America/New_York'). "
+            "Omit to show MAL's native JST broadcast times."
+        ),
+    ] = None,
+) -> ToolResult:
+    """Your personal weekly airing calendar: which anime on your 'watching' list
+    broadcast on each day of the week.
+
+    Fetches your watching list, keeps only currently-airing shows, and groups them by
+    broadcast day. Times are MAL's native JST unless `timezone` is given, in which case
+    both the time and the weekday are converted to that zone (a late-night JST slot can
+    fall on a different local day). Shows MAL has no broadcast slot for go in an
+    "unscheduled" group.
+
+    Returns a per-day text digest plus structured content {"timezone", "today", "total",
+    "days": [{"day", "entries": [...]}]}; each entry has id, title, picture, media_type,
+    my_score, episodes_watched, total_episodes, broadcast_time.
+    """
+    target_tz = _resolve_timezone(timezone)
+    now = datetime.now(JST)
+    edges = await _fetch_watching_edges()
+    days, total = _build_schedule(edges, target_tz, now=now)
+    tz_label = timezone or "Asia/Tokyo"
+    today = WEEKDAYS[now.astimezone(target_tz or JST).weekday()]
+    return ui_result(
+        "schedule",
+        {"timezone": tz_label, "today": today, "total": total, "days": days},
+        _summarize_schedule(days, total, tz_label, today),
     )
 
 

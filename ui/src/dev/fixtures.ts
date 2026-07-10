@@ -5,6 +5,7 @@ import type {
   DetailPayload,
   ListPayload,
   RankingPayload,
+  SchedulePayload,
   SearchPayload,
   SeasonalPayload,
   ViewPayload,
@@ -292,6 +293,55 @@ const dashboard: DashboardPayload = {
   },
 };
 
+const sched = (
+  id: number,
+  title: string,
+  picture: string | null,
+  broadcast_time: string | null,
+  episodes_watched: number,
+  total_episodes: number,
+  my_score = 0,
+) => ({
+  id,
+  title,
+  picture,
+  media_type: "tv",
+  airing_status: "currently_airing",
+  my_score,
+  episodes_watched,
+  total_episodes,
+  broadcast_time,
+});
+
+const schedule: SchedulePayload = {
+  view: "schedule",
+  timezone: "Europe/Istanbul",
+  today: "friday",
+  total: 6,
+  days: [
+    { day: "monday", entries: [sched(9253, "Steins;Gate", `${CDN}/1935/127974.jpg`, "17:00", 12, 24, 9)] },
+    { day: "tuesday", entries: [] },
+    {
+      day: "wednesday",
+      entries: [
+        sched(48569, "86 Part 2", `${CDN}/1111/117134.jpg`, "16:30", 4, 12),
+        sched(28977, "Gintama°", `${CDN}/3/72078.jpg`, "18:25", 20, 51, 8),
+      ],
+    },
+    { day: "thursday", entries: [] },
+    {
+      day: "friday",
+      entries: [sched(52991, "Sousou no Frieren", `${CDN}/1015/138006.jpg`, "17:00", 17, 28, 9)],
+    },
+    {
+      day: "saturday",
+      entries: [sched(5114, "Fullmetal Alchemist: Brotherhood", `${CDN}/1208/94745.jpg`, "18:00", 40, 64, 10)],
+    },
+    { day: "sunday", entries: [] },
+    { day: "unscheduled", entries: [sched(21, "One Piece", `${CDN}/1244/138851.jpg`, null, 0, 0)] },
+  ],
+};
+
 export const FIXTURES: Record<string, ViewPayload> = {
   search,
   detail,
@@ -299,4 +349,5 @@ export const FIXTURES: Record<string, ViewPayload> = {
   ranking,
   seasonal,
   dashboard,
+  schedule,
 };
