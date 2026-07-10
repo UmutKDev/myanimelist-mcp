@@ -1,18 +1,18 @@
 import { motion, useReducedMotion } from "motion/react";
 
-import type { ScheduleEntry, SchedulePayload } from "../mcp/types";
+import type { ScheduleDay, ScheduleEntry, SchedulePayload } from "../mcp/types";
 import { titleGradient } from "../lib/format";
 import { useNav } from "../lib/nav";
 import { EmptyState } from "../components/EmptyState";
 
 const DAY_LABEL: Record<string, string> = {
-  monday: "Mon",
-  tuesday: "Tue",
-  wednesday: "Wed",
-  thursday: "Thu",
-  friday: "Fri",
-  saturday: "Sat",
-  sunday: "Sun",
+  monday: "Monday",
+  tuesday: "Tuesday",
+  wednesday: "Wednesday",
+  thursday: "Thursday",
+  friday: "Friday",
+  saturday: "Saturday",
+  sunday: "Sunday",
   unscheduled: "Unscheduled",
 };
 
@@ -59,7 +59,9 @@ function ScheduleCard({ entry, index }: { entry: ScheduleEntry; index: number })
   );
 }
 
-/** Personal weekly airing calendar (get_weekly_schedule). */
+/** Personal weekly airing calendar (get_weekly_schedule), laid out as a vertical
+ *  agenda so it reads cleanly at any width — one band per day, shows wrap within
+ *  the day, no cross-column height coupling. */
 export function ScheduleView({ payload }: { payload: SchedulePayload }) {
   const reduced = useReducedMotion();
 
@@ -74,6 +76,8 @@ export function ScheduleView({ payload }: { payload: SchedulePayload }) {
 
   const weekdays = payload.days.filter((d) => d.day !== "unscheduled");
   const unscheduled = payload.days.find((d) => d.day === "unscheduled");
+  const rows: ScheduleDay[] = [...weekdays];
+  if (unscheduled && unscheduled.entries.length > 0) rows.push(unscheduled);
 
   return (
     <section className="view schedule">
@@ -85,45 +89,35 @@ export function ScheduleView({ payload }: { payload: SchedulePayload }) {
         <h1 className="display view-title">This week</h1>
       </header>
 
-      <div className="week-grid">
-        {weekdays.map((d, ci) => {
+      <div className="week-agenda">
+        {rows.map((d, ri) => {
           const today = d.day === payload.today;
+          const empty = d.entries.length === 0;
           return (
             <motion.div
               key={d.day}
-              className={`day-col${today ? " is-today" : ""}`}
-              initial={reduced ? false : { opacity: 0, y: 12 }}
+              className={`day-row${today ? " is-today" : ""}${empty ? " is-empty" : ""}`}
+              initial={reduced ? false : { opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: Math.min(ci * 0.05, 0.4), duration: 0.3 }}
+              transition={{ delay: Math.min(ri * 0.05, 0.4), duration: 0.3 }}
             >
-              <div className="day-head">
-                <span>{DAY_LABEL[d.day]}</span>
+              <div className="day-row-label">
+                <span className="day-row-name">{DAY_LABEL[d.day]}</span>
                 {today && <span className="today-pill">Today</span>}
               </div>
-              {d.entries.length > 0 ? (
-                <div className="day-cards">
+              {empty ? (
+                <div className="day-row-empty">Nothing airing</div>
+              ) : (
+                <div className="day-row-shows">
                   {d.entries.map((e, i) => (
                     <ScheduleCard key={e.id} entry={e} index={i} />
                   ))}
                 </div>
-              ) : (
-                <div className="day-empty">·</div>
               )}
             </motion.div>
           );
         })}
       </div>
-
-      {unscheduled && unscheduled.entries.length > 0 && (
-        <section className="unscheduled-strip">
-          <div className="eyebrow">No fixed broadcast slot</div>
-          <div className="unscheduled-cards">
-            {unscheduled.entries.map((e, i) => (
-              <ScheduleCard key={e.id} entry={e} index={i} />
-            ))}
-          </div>
-        </section>
-      )}
     </section>
   );
 }
