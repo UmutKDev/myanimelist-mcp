@@ -538,6 +538,11 @@ JST = ZoneInfo("Asia/Tokyo")  # MAL broadcast times are Japan Standard Time
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 
 
+def _effective_tz_name(param: str | None) -> str | None:
+    """Pick the schedule timezone: explicit arg > MAL_TIMEZONE env > JST (None)."""
+    return param or os.getenv("MAL_TIMEZONE") or None
+
+
 def _resolve_timezone(name: str | None) -> ZoneInfo | None:
     """Resolve an IANA timezone name; None means 'keep MAL's native JST'."""
     if not name:
@@ -547,7 +552,8 @@ def _resolve_timezone(name: str | None) -> ZoneInfo | None:
     except (ZoneInfoNotFoundError, ValueError) as exc:
         raise ToolError(
             f"Unknown timezone '{name}'. Use an IANA name like 'Europe/Istanbul' or "
-            "'America/New_York', or omit it to see MAL's native JST times."
+            "'America/New_York' (via the timezone argument or the MAL_TIMEZONE env var), "
+            "or omit it to see MAL's native JST times."
         ) from exc
 
 
@@ -1296,7 +1302,7 @@ async def get_weekly_schedule(
         str | None,
         Field(
             description="IANA timezone name (e.g. 'Europe/Istanbul', 'America/New_York'). "
-            "Omit to show MAL's native JST broadcast times."
+            "Overrides the MAL_TIMEZONE env var; omit both to show MAL's native JST times."
         ),
     ] = None,
 ) -> ToolResult:
@@ -1304,20 +1310,21 @@ async def get_weekly_schedule(
     broadcast on each day of the week.
 
     Fetches your watching list, keeps only currently-airing shows, and groups them by
-    broadcast day. Times are MAL's native JST unless `timezone` is given, in which case
-    both the time and the weekday are converted to that zone (a late-night JST slot can
-    fall on a different local day). Shows MAL has no broadcast slot for go in an
-    "unscheduled" group.
+    broadcast day. Times are shown in the `timezone` argument if given, else the
+    MAL_TIMEZONE env var, else MAL's native JST. When a timezone applies, both the time
+    and the weekday are converted (a late-night JST slot can fall on a different local
+    day). Shows MAL has no broadcast slot for go in an "unscheduled" group.
 
     Returns a per-day text digest plus structured content {"timezone", "today", "total",
     "days": [{"day", "entries": [...]}]}; each entry has id, title, picture, media_type,
     my_score, episodes_watched, total_episodes, broadcast_time.
     """
-    target_tz = _resolve_timezone(timezone)
+    tz_name = _effective_tz_name(timezone)
+    target_tz = _resolve_timezone(tz_name)
     now = datetime.now(JST)
     edges = await _fetch_watching_edges()
     days, total = _build_schedule(edges, target_tz, now=now)
-    tz_label = timezone or "Asia/Tokyo"
+    tz_label = tz_name or "Asia/Tokyo"
     today = WEEKDAYS[now.astimezone(target_tz or JST).weekday()]
     return ui_result(
         "schedule",

@@ -62,7 +62,7 @@ model's back. The theme follows the host's light/dark mode; cover art loads from
 | `get_manga_ranking(ranking_type, limit=25)` | Manga rankings: all, manga, novels, oneshots, doujin, manhwa, manhua, bypopularity, favorite. |
 | `get_seasonal_anime(year, season, sort?, limit=25)` | Anime of one broadcast season (winter/spring/summer/fall). |
 | `get_suggested_anime(limit=25)` | MAL's personalized suggestions for the authenticated user. |
-| `get_weekly_schedule(timezone?)` | Your personal weekly airing calendar: the currently-airing anime on your `watching` list, grouped by broadcast day. JST by default, or converted to any IANA `timezone`. |
+| `get_weekly_schedule(timezone?)` | Your personal weekly airing calendar: the currently-airing anime on your `watching` list, grouped by broadcast day. Uses the `timezone` argument, else the `MAL_TIMEZONE` env var, else MAL's native JST. |
 
 **Users**
 
@@ -159,6 +159,7 @@ the header/static options.
 | `MAL_CLIENT_ID` | *(unset)* | MAL app Client ID, for the refresh grant. |
 | `MAL_CLIENT_SECRET` | *(unset)* | MAL app Client Secret — required for "Web"-type apps. |
 | `MAL_ACCESS_TOKEN` | *(unset)* | Static fallback token (expires ~31 days). |
+| `MAL_TIMEZONE` | *(unset → JST)* | Default IANA timezone for `get_weekly_schedule` (e.g. `Europe/Istanbul`). The tool's `timezone` argument overrides it. |
 
 ## Docker
 

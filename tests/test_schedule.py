@@ -9,6 +9,7 @@ from fastmcp.exceptions import ToolError
 from mal_mcp.server import (
     _build_schedule,
     _convert_broadcast,
+    _effective_tz_name,
     _resolve_timezone,
     _summarize_schedule,
 )
@@ -28,6 +29,22 @@ def _edge(status="currently_airing", day="friday", start="23:00", **node):
     }
     base.update(node)
     return {"node": base, "list_status": {"score": 8, "num_episodes_watched": 3}}
+
+
+class TestEffectiveTimezone:
+    def test_arg_wins_over_env(self, monkeypatch):
+        monkeypatch.setenv("MAL_TIMEZONE", "Asia/Seoul")
+        assert _effective_tz_name("Europe/Istanbul") == "Europe/Istanbul"
+
+    def test_falls_back_to_env(self, monkeypatch):
+        monkeypatch.setenv("MAL_TIMEZONE", "Europe/Istanbul")
+        assert _effective_tz_name(None) == "Europe/Istanbul"
+
+    def test_none_when_neither_set(self, monkeypatch):
+        monkeypatch.delenv("MAL_TIMEZONE", raising=False)
+        assert _effective_tz_name(None) is None
+        monkeypatch.setenv("MAL_TIMEZONE", "")  # empty env is not a timezone
+        assert _effective_tz_name(None) is None
 
 
 class TestResolveTimezone:
