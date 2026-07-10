@@ -5,3 +5,6 @@ __pycache__/
 .DS_Store
 node_modules/
 src/mal_mcp/ui/dist/
+
+# Claude Code — personal, machine-local overrides (shared config stays tracked)
+.claude/settings.local.json
