@@ -1,6 +1,6 @@
 [project]
 name = "mal-mcp"
-version = "0.4.2"
+version = "0.4.3"
 description = "Stateless MyAnimeList MCP server (streamable-http) with an MCP Apps UI, designed to run behind an Obot MCP gateway"
 readme = "README.md"
 requires-python = ">=3.12"
