@@ -23,10 +23,12 @@ from typing import Annotated, Any, Literal
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
+from fastmcp.tools import ToolResult
 from pydantic import Field
 
 from mal_mcp.mal_client import MALClient, MALError, MALTokenError
 from mal_mcp.token_manager import TokenManager, TokenRefreshError
+from mal_mcp.ui import register_ui, ui_result, ui_tool_meta
 
 MangaStatusFilter = Literal["reading", "completed", "on_hold", "dropped", "plan_to_read"]
 MangaSortOrder = Literal["list_score", "list_updated_at", "manga_title", "manga_start_date"]
@@ -141,6 +143,12 @@ def _names(items: Any) -> list[str]:
     return [i["name"] for i in items if isinstance(i, dict) and i.get("name")]
 
 
+def _picture(data: dict[str, Any], size: str = "medium") -> str | None:
+    """Cover URL from MAL's main_picture ({'medium': .., 'large': ..}), if present."""
+    pic = data.get("main_picture") or {}
+    return pic.get(size) or pic.get("medium")
+
+
 def _compact_entry(edge: dict[str, Any]) -> dict[str, Any]:
     """Flatten one animelist edge ({'node': .., 'list_status': ..}) into a compact record."""
     node = edge.get("node") or {}
@@ -148,6 +156,7 @@ def _compact_entry(edge: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": node.get("id"),
         "title": node.get("title"),
+        "picture": _picture(node),
         "year": (node.get("start_season") or {}).get("year"),
         "media_type": node.get("media_type"),
         "airing_status": node.get("status"),
@@ -273,6 +282,7 @@ def _compact_search_result(node: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": node.get("id"),
         "title": node.get("title"),
+        "picture": _picture(node),
         "year": (node.get("start_season") or {}).get("year"),
         "media_type": node.get("media_type"),
         "airing_status": node.get("status"),
@@ -303,6 +313,8 @@ def _compact_detail(data: dict[str, Any]) -> dict[str, Any]:
     detail = {
         "id": data.get("id"),
         "title": data.get("title"),
+        "picture": _picture(data),
+        "picture_large": _picture(data, "large"),
         "alternative_titles": data.get("alternative_titles"),
         "synopsis": data.get("synopsis"),
         "mean": data.get("mean"),
@@ -360,6 +372,7 @@ def _compact_manga_entry(edge: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": node.get("id"),
         "title": node.get("title"),
+        "picture": _picture(node),
         "year": _year_from_date(node.get("start_date")),
         "media_type": node.get("media_type"),
         "publishing_status": node.get("status"),
@@ -383,6 +396,7 @@ def _compact_manga_search_result(node: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": node.get("id"),
         "title": node.get("title"),
+        "picture": _picture(node),
         "year": _year_from_date(node.get("start_date")),
         "media_type": node.get("media_type"),
         "publishing_status": node.get("status"),
@@ -410,6 +424,8 @@ def _compact_manga_detail(data: dict[str, Any]) -> dict[str, Any]:
     detail = {
         "id": data.get("id"),
         "title": data.get("title"),
+        "picture": _picture(data),
+        "picture_large": _picture(data, "large"),
         "alternative_titles": data.get("alternative_titles"),
         "synopsis": data.get("synopsis"),
         "mean": data.get("mean"),
@@ -456,6 +472,7 @@ def _compact_ranking_entry(item: dict[str, Any], kind: str) -> dict[str, Any]:
         "previous_rank": ranking.get("previous_rank"),
         "id": node.get("id"),
         "title": node.get("title"),
+        "picture": _picture(node),
         "media_type": node.get("media_type"),
         "mean": node.get("mean"),
         "num_list_users": node.get("num_list_users"),
@@ -512,6 +529,179 @@ def _build_changes(**kwargs: Any) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Model-facing summaries for UI tools (the full payload goes to the app as
+# structuredContent; these keep the model's context slim - ids are preserved
+# so the model can chain into detail/update tools).
+# ---------------------------------------------------------------------------
+
+
+def _paging_note(count: int, offset: int, has_more: bool) -> str:
+    return f"{count} entries (offset {offset}, has_more={str(has_more).lower()})"
+
+
+def _summarize_search(kind: str, results: list[dict[str, Any]], query: str | None) -> str:
+    label = f" for '{query}'" if query else " (MAL personalized suggestions)"
+    size_col = "eps" if kind == "anime" else "chapters"
+    lines = [
+        f"{len(results)} {kind} result(s){label}",
+        f"columns: id|title|year|type|mean|{size_col}|genres",
+    ]
+    for r in results:
+        size = r.get("num_episodes") if kind == "anime" else r.get("num_chapters")
+        lines.append(
+            f"{r['id']}|{r['title']}|{r['year'] or '?'}|{r['media_type'] or '?'}|"
+            f"{r['mean'] or '-'}|{size or '?'}|{','.join(r['genres'][:3]) or '-'}"
+        )
+    return "\n".join(lines)
+
+
+def _summarize_list(
+    kind: str,
+    entries: list[dict[str, Any]],
+    offset: int,
+    has_more: bool,
+    user_name: str | None = None,
+) -> str:
+    owner = f"{user_name}'s" if user_name else "my"
+    progress_col = "watched/total" if kind == "anime" else "read/total_ch"
+    lines = [
+        f"{owner} {kind} list: {_paging_note(len(entries), offset, has_more)}",
+        f"columns: id|my_score|my_status|title|year|type|{progress_col}|genres",
+    ]
+    for e in entries:
+        if kind == "anime":
+            progress = f"{e['episodes_watched']}/{e['total_episodes'] or '?'}"
+        else:
+            progress = f"{e['chapters_read']}/{e['total_chapters'] or '?'}"
+        lines.append(
+            f"{e['id']}|{e['my_score'] or '-'}|{e['my_status'] or '-'}|{e['title']}|"
+            f"{e['year'] or '?'}|{e['media_type'] or '?'}|{progress}|"
+            f"{','.join(e['genres'][:3]) or '-'}"
+        )
+    return "\n".join(lines)
+
+
+def _summarize_detail(d: dict[str, Any], kind: str) -> str:
+    lines = [
+        f"{d.get('title')} ({d.get('year') or '?'}, {d.get('media_type') or '?'}) - MAL id {d.get('id')}",
+        f"mean {d.get('mean') or '-'} | rank #{d.get('rank') or '-'} | "
+        f"popularity #{d.get('popularity') or '-'} | {d.get('num_list_users') or 0} list users",
+    ]
+    if kind == "anime":
+        lines.append(
+            f"{d.get('num_episodes') or '?'} eps ({d.get('airing_status') or '?'}) | "
+            f"genres: {', '.join(d.get('genres') or []) or '-'} | "
+            f"studios: {', '.join(d.get('studios') or []) or '-'}"
+        )
+    else:
+        lines.append(
+            f"{d.get('num_chapters') or '?'} ch / {d.get('num_volumes') or '?'} vol "
+            f"({d.get('publishing_status') or '?'}) | "
+            f"genres: {', '.join(d.get('genres') or []) or '-'} | "
+            f"authors: {', '.join(d.get('authors') or []) or '-'}"
+        )
+    if d.get("my_list_status"):
+        ls = d["my_list_status"]
+        lines.append(f"my status: {ls.get('status') or '-'}, my score: {ls.get('score') or '-'}")
+    if d.get("synopsis"):
+        lines.append(f"synopsis: {d['synopsis']}")
+    related = d.get("related_anime" if kind == "anime" else "related_manga") or []
+    if related:
+        lines.append(
+            "related: "
+            + "; ".join(f"{r['title']} ({r['relation_type']}, id {r['id']})" for r in related[:8])
+        )
+    recommendations = d.get("recommendations") or []
+    if recommendations:
+        lines.append(
+            "recommendations: "
+            + "; ".join(f"{r['title']} (id {r['id']})" for r in recommendations[:5])
+        )
+    return "\n".join(lines)
+
+
+def _summarize_ranking(
+    kind: str, ranking_type: str, entries: list[dict[str, Any]], offset: int, has_more: bool
+) -> str:
+    lines = [
+        f"MAL {kind} ranking '{ranking_type}': {_paging_note(len(entries), offset, has_more)}",
+        "columns: rank|id|title|year|type|mean|list_users",
+    ]
+    for e in entries:
+        lines.append(
+            f"{e.get('rank') or '-'}|{e['id']}|{e['title']}|{e.get('year') or '?'}|"
+            f"{e.get('media_type') or '?'}|{e.get('mean') or '-'}|{e.get('num_list_users') or '-'}"
+        )
+    return "\n".join(lines)
+
+
+def _summarize_seasonal(
+    year: int, season: str, entries: list[dict[str, Any]], offset: int, has_more: bool
+) -> str:
+    lines = [
+        f"{season} {year} seasonal anime: {_paging_note(len(entries), offset, has_more)}",
+        "columns: id|title|type|mean|list_users|genres",
+    ]
+    for e in entries:
+        lines.append(
+            f"{e['id']}|{e['title']}|{e.get('media_type') or '?'}|{e.get('mean') or '-'}|"
+            f"{e.get('num_list_users') or '-'}|{','.join((e.get('genres') or [])[:3]) or '-'}"
+        )
+    return "\n".join(lines)
+
+
+def _summarize_stats(stats: dict[str, Any]) -> str:
+    scores = stats["scores"]
+    episodes = stats["episodes"]
+    lines = [
+        f"Anime list stats: {stats['total_entries']} entries | {scores['scored_count']} scored "
+        f"(mean {scores['mean'] or '-'}, median {scores['median'] or '-'})",
+        "status: " + (", ".join(f"{k} {v}" for k, v in stats["status_distribution"].items()) or "-"),
+        f"episodes watched: {episodes['total_episodes_watched']} "
+        f"(~{episodes['estimated_watch_hours']}h / {episodes['estimated_watch_days']}d)",
+        "top genres: "
+        + (", ".join(f"{g['name']} ({g['count']})" for g in stats["top_genres"][:8]) or "-"),
+        "top studios: "
+        + (", ".join(f"{s['name']} ({s['count']})" for s in stats["top_studios"][:5]) or "-"),
+        "media types: "
+        + (", ".join(f"{k} {v}" for k, v in stats["media_type_distribution"].items()) or "-"),
+        "decades: " + (", ".join(f"{k} {v}" for k, v in stats["release_decades"].items()) or "-"),
+    ]
+    community = stats["community_comparison"]
+    if community["avg_my_score_minus_mal_mean"] is not None:
+        lines.append(
+            f"vs community: my score - MAL mean = {community['avg_my_score_minus_mal_mean']} "
+            f"(over {community['compared_entries']} entries)"
+        )
+    if stats.get("truncated"):
+        lines.append(f"WARNING: {stats.get('warning', 'list truncated at the fetch cap')}")
+    return "\n".join(lines)
+
+
+def _summarize_profile(profile: dict[str, Any]) -> str:
+    lines = [f"MAL profile: {profile.get('name')} (id {profile.get('id')})"]
+    joined = profile.get("joined_at") or ""
+    facts = [
+        f"location: {profile['location']}" if profile.get("location") else None,
+        f"joined: {joined[:10]}" if joined else None,
+        f"time zone: {profile['time_zone']}" if profile.get("time_zone") else None,
+        "MAL supporter" if profile.get("is_supporter") else None,
+    ]
+    facts = [f for f in facts if f]
+    if facts:
+        lines.append(" | ".join(facts))
+    anime_stats = profile.get("anime_statistics") or {}
+    if anime_stats:
+        lines.append(
+            f"anime: {anime_stats.get('num_items') or 0} items | "
+            f"{anime_stats.get('num_episodes') or 0} episodes | "
+            f"{anime_stats.get('num_days') or 0} days watched | "
+            f"mean score {anime_stats.get('mean_score') or '-'}"
+        )
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
 
@@ -531,7 +721,8 @@ async def _fetch_compact_list() -> tuple[list[dict[str, Any]], bool]:
         "title": "Get My Anime List",
         "readOnlyHint": True,
         "openWorldHint": True,
-    }
+    },
+    meta=ui_tool_meta(),
 )
 async def get_my_anime_list(
     status_filter: StatusFilter | None = None,
@@ -542,7 +733,7 @@ async def get_my_anime_list(
     offset: Annotated[
         int, Field(ge=0, description="Entries to skip; increase to page through large lists")
     ] = 0,
-) -> dict[str, Any]:
+) -> ToolResult:
     """Fetch a page of the authenticated user's MyAnimeList anime list.
 
     Results are paged to keep responses bounded: use `limit`/`offset` (and `has_more` in
@@ -557,11 +748,11 @@ async def get_my_anime_list(
         limit: Maximum entries to return (1-1000, default 100).
         offset: Entries to skip for paging (default 0).
 
-    Returns:
-        {"total_returned": int, "offset": int, "has_more": bool, "entries": [...]} where each
-        entry has: id, title, year, media_type, airing_status, my_status, my_score
-        (0 = not scored), episodes_watched, total_episodes (0 = unknown), genres,
-        mal_mean (community score), studios, updated_at.
+    Returns a compact text table (id|my_score|my_status|title|year|type|watched/total|genres)
+    plus structured content {"total_returned", "offset", "has_more", "entries"} where each
+    entry has: id, title, picture, year, media_type, airing_status, my_status, my_score
+    (0 = not scored), episodes_watched, total_episodes (0 = unknown), genres,
+    mal_mean (community score), studios, updated_at.
     """
     edges, has_more = await _call_mal(
         lambda client: client.get_anime_list_page(
@@ -571,12 +762,18 @@ async def get_my_anime_list(
     entries = [_compact_entry(edge) for edge in edges]
     for e in entries:
         e.pop("avg_episode_duration_sec", None)  # internal detail used only by stats
-    return {
-        "total_returned": len(entries),
-        "offset": offset,
-        "has_more": has_more,
-        "entries": entries,
-    }
+    return ui_result(
+        "list",
+        {
+            "kind": "anime",
+            "editable": True,
+            "total_returned": len(entries),
+            "offset": offset,
+            "has_more": has_more,
+            "entries": entries,
+        },
+        _summarize_list("anime", entries, offset, has_more),
+    )
 
 
 @mcp.tool(
@@ -584,19 +781,21 @@ async def get_my_anime_list(
         "title": "Get User Stats",
         "readOnlyHint": True,
         "openWorldHint": True,
-    }
+    },
+    meta=ui_tool_meta(),
 )
-async def get_user_stats() -> dict[str, Any]:
+async def get_user_stats() -> ToolResult:
     """Compute summary statistics over the authenticated user's entire anime list.
 
     Fetches the full list in one paginated pass and aggregates locally (no extra MAL calls).
 
-    Returns a dict with: total_entries; status_distribution; scores (count/mean/median/
-    1-10 histogram); episodes (total watched + estimated watch hours/days, using each show's
-    average episode duration, ~24 min fallback); top_genres (top 15 with count and avg user
-    score); media_type_distribution; release_decades; community_comparison (avg difference
-    between the user's scores and MAL community means); top_studios (top 10). If the list
-    exceeds the 20,000-entry fetch cap, "truncated": true and a warning are included.
+    Returns a text digest plus structured content with: total_entries; status_distribution;
+    scores (count/mean/median/1-10 histogram); episodes (total watched + estimated watch
+    hours/days, using each show's average episode duration, ~24 min fallback); top_genres
+    (top 15 with count and avg user score); media_type_distribution; release_decades;
+    community_comparison (avg difference between the user's scores and MAL community means);
+    top_studios (top 10). If the list exceeds the 20,000-entry fetch cap,
+    "truncated": true and a warning are included.
     """
     entries, truncated = await _fetch_compact_list()
     stats = _compute_stats(entries)
@@ -606,7 +805,7 @@ async def get_user_stats() -> dict[str, Any]:
             "The list exceeds the 20,000-entry fetch cap; statistics cover only the "
             "first 20,000 entries."
         )
-    return stats
+    return ui_result("dashboard", {"stats": stats}, _summarize_stats(stats))
 
 
 @mcp.tool(
@@ -614,21 +813,27 @@ async def get_user_stats() -> dict[str, Any]:
         "title": "Search Anime",
         "readOnlyHint": True,
         "openWorldHint": True,
-    }
+    },
+    meta=ui_tool_meta(),
 )
 async def search_anime(
     query: Annotated[str, Field(min_length=1, description="Title to search for (MAL needs ~3+ characters)")],
     limit: Annotated[int, Field(ge=1, le=50, description="Maximum results to return")] = 10,
-) -> dict[str, Any]:
+) -> ToolResult:
     """Search MyAnimeList's public anime catalog by title.
 
-    Returns {"count": int, "results": [...]} where each result has: id, title, year,
-    media_type, airing_status, mean (community score), num_episodes, genres, and a
+    Returns a compact text table (id|title|year|type|mean|eps|genres) plus structured
+    content {"count": int, "results": [...]} where each result has: id, title, picture,
+    year, media_type, airing_status, mean (community score), num_episodes, genres, and a
     synopsis truncated to 300 characters. Use get_anime_detail for full information.
     """
     nodes = await _call_mal(lambda client: client.search_anime(query, limit=limit))
     results = [_compact_search_result(edge.get("node") or {}) for edge in nodes]
-    return {"count": len(results), "results": results}
+    return ui_result(
+        "search",
+        {"kind": "anime", "query": query, "count": len(results), "results": results},
+        _summarize_search("anime", results, query),
+    )
 
 
 @mcp.tool(
@@ -636,11 +841,12 @@ async def search_anime(
         "title": "Get Anime Detail",
         "readOnlyHint": True,
         "openWorldHint": True,
-    }
+    },
+    meta=ui_tool_meta(),
 )
 async def get_anime_detail(
     anime_id: Annotated[int, Field(ge=1, description="MAL anime id, e.g. from search results")],
-) -> dict[str, Any]:
+) -> ToolResult:
     """Fetch full public details for one anime by its MAL id.
 
     Returns title(s), synopsis, community stats (mean, rank, popularity, list/scoring user
@@ -649,7 +855,8 @@ async def get_anime_detail(
     authenticated user's list, my_list_status (their status/score/progress) is included.
     """
     data = await _call_mal(lambda client: client.get_anime_detail(anime_id))
-    return _compact_detail(data)
+    detail = _compact_detail(data)
+    return ui_result("detail", {"kind": "anime", **detail}, _summarize_detail(detail, "anime"))
 
 
 @mcp.tool(
@@ -689,30 +896,37 @@ async def analyze_taste() -> str:
 
 
 @mcp.tool(
-    annotations={"title": "Search Manga", "readOnlyHint": True, "openWorldHint": True}
+    annotations={"title": "Search Manga", "readOnlyHint": True, "openWorldHint": True},
+    meta=ui_tool_meta(),
 )
 async def search_manga(
     query: Annotated[str, Field(min_length=1, description="Title to search for (MAL needs ~3+ characters)")],
     limit: Annotated[int, Field(ge=1, le=50, description="Maximum results to return")] = 10,
-) -> dict[str, Any]:
+) -> ToolResult:
     """Search MyAnimeList's public manga catalog by title.
 
-    Returns {"count": int, "results": [...]} where each result has: id, title, year,
-    media_type (manga/novel/one_shot/...), publishing_status, mean (community score),
+    Returns a compact text table (id|title|year|type|mean|chapters|genres) plus structured
+    content {"count": int, "results": [...]} where each result has: id, title, picture,
+    year, media_type (manga/novel/one_shot/...), publishing_status, mean (community score),
     num_chapters/num_volumes (0 = unknown/ongoing), genres, authors, and a synopsis
     truncated to 300 characters. Use get_manga_detail for full information.
     """
     nodes = await _call_mal(lambda client: client.search_manga(query, limit=limit))
     results = [_compact_manga_search_result(edge.get("node") or {}) for edge in nodes]
-    return {"count": len(results), "results": results}
+    return ui_result(
+        "search",
+        {"kind": "manga", "query": query, "count": len(results), "results": results},
+        _summarize_search("manga", results, query),
+    )
 
 
 @mcp.tool(
-    annotations={"title": "Get Manga Detail", "readOnlyHint": True, "openWorldHint": True}
+    annotations={"title": "Get Manga Detail", "readOnlyHint": True, "openWorldHint": True},
+    meta=ui_tool_meta(),
 )
 async def get_manga_detail(
     manga_id: Annotated[int, Field(ge=1, description="MAL manga id, e.g. from search results")],
-) -> dict[str, Any]:
+) -> ToolResult:
     """Fetch full public details for one manga by its MAL id.
 
     Returns title(s), synopsis, community stats (mean, rank, popularity), publication
@@ -721,18 +935,20 @@ async def get_manga_detail(
     is on the authenticated user's list, my_list_status is included.
     """
     data = await _call_mal(lambda client: client.get_manga_detail(manga_id))
-    return _compact_manga_detail(data)
+    detail = _compact_manga_detail(data)
+    return ui_result("detail", {"kind": "manga", **detail}, _summarize_detail(detail, "manga"))
 
 
 @mcp.tool(
-    annotations={"title": "Get My Manga List", "readOnlyHint": True, "openWorldHint": True}
+    annotations={"title": "Get My Manga List", "readOnlyHint": True, "openWorldHint": True},
+    meta=ui_tool_meta(),
 )
 async def get_my_manga_list(
     status_filter: MangaStatusFilter | None = None,
     sort: MangaSortOrder | None = None,
     limit: Annotated[int, Field(ge=1, le=1000, description="Maximum entries to return")] = 100,
     offset: Annotated[int, Field(ge=0, description="Entries to skip for paging")] = 0,
-) -> dict[str, Any]:
+) -> ToolResult:
     """Fetch a page of the authenticated user's MyAnimeList manga list.
 
     Args:
@@ -740,10 +956,10 @@ async def get_my_manga_list(
         sort: list_score (desc), list_updated_at (desc), manga_title (asc),
             manga_start_date (desc). Omit for MAL's default order.
 
-    Returns {"total_returned", "offset", "has_more", "entries"}; each entry has: id,
-    title, year, media_type, publishing_status, my_status, my_score (0 = not scored),
-    chapters_read/volumes_read, total_chapters/total_volumes (0 = unknown), genres,
-    mal_mean, authors, updated_at.
+    Returns a compact text table plus structured content {"total_returned", "offset",
+    "has_more", "entries"}; each entry has: id, title, picture, year, media_type,
+    publishing_status, my_status, my_score (0 = not scored), chapters_read/volumes_read,
+    total_chapters/total_volumes (0 = unknown), genres, mal_mean, authors, updated_at.
     """
     edges, has_more = await _call_mal(
         lambda client: client.get_manga_list_page(
@@ -751,12 +967,18 @@ async def get_my_manga_list(
         )
     )
     entries = [_compact_manga_entry(edge) for edge in edges]
-    return {
-        "total_returned": len(entries),
-        "offset": offset,
-        "has_more": has_more,
-        "entries": entries,
-    }
+    return ui_result(
+        "list",
+        {
+            "kind": "manga",
+            "editable": True,
+            "total_returned": len(entries),
+            "offset": offset,
+            "has_more": has_more,
+            "entries": entries,
+        },
+        _summarize_list("manga", entries, offset, has_more),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -765,63 +987,77 @@ async def get_my_manga_list(
 
 
 @mcp.tool(
-    annotations={"title": "Get Anime Ranking", "readOnlyHint": True, "openWorldHint": True}
+    annotations={"title": "Get Anime Ranking", "readOnlyHint": True, "openWorldHint": True},
+    meta=ui_tool_meta(),
 )
 async def get_anime_ranking(
     ranking_type: AnimeRankingType = "all",
     limit: Annotated[int, Field(ge=1, le=500, description="Maximum entries to return")] = 25,
     offset: Annotated[int, Field(ge=0, description="Entries to skip for paging")] = 0,
-) -> dict[str, Any]:
+) -> ToolResult:
     """Fetch MAL's official anime rankings.
 
     ranking_type: all (top by score), airing, upcoming, tv, ova, movie, special,
-    bypopularity, favorite. Returns {"ranking_type", "total_returned", "offset",
-    "has_more", "entries"}; each entry: rank, previous_rank, id, title, year,
-    media_type, mean, num_list_users, num_episodes, airing_status, genres.
+    bypopularity, favorite. Returns a compact text table plus structured content
+    {"ranking_type", "total_returned", "offset", "has_more", "entries"}; each entry:
+    rank, previous_rank, id, title, picture, year, media_type, mean, num_list_users,
+    num_episodes, airing_status, genres.
     """
     items, has_more = await _call_mal(
         lambda client: client.get_anime_ranking(ranking_type, limit=limit, offset=offset)
     )
     entries = [_compact_ranking_entry(item, "anime") for item in items]
-    return {
-        "ranking_type": ranking_type,
-        "total_returned": len(entries),
-        "offset": offset,
-        "has_more": has_more,
-        "entries": entries,
-    }
+    return ui_result(
+        "ranking",
+        {
+            "kind": "anime",
+            "ranking_type": ranking_type,
+            "total_returned": len(entries),
+            "offset": offset,
+            "has_more": has_more,
+            "entries": entries,
+        },
+        _summarize_ranking("anime", ranking_type, entries, offset, has_more),
+    )
 
 
 @mcp.tool(
-    annotations={"title": "Get Manga Ranking", "readOnlyHint": True, "openWorldHint": True}
+    annotations={"title": "Get Manga Ranking", "readOnlyHint": True, "openWorldHint": True},
+    meta=ui_tool_meta(),
 )
 async def get_manga_ranking(
     ranking_type: MangaRankingType = "all",
     limit: Annotated[int, Field(ge=1, le=500, description="Maximum entries to return")] = 25,
     offset: Annotated[int, Field(ge=0, description="Entries to skip for paging")] = 0,
-) -> dict[str, Any]:
+) -> ToolResult:
     """Fetch MAL's official manga rankings.
 
     ranking_type: all, manga, novels, oneshots, doujin, manhwa, manhua, bypopularity,
     favorite. Returns the same paged shape as get_anime_ranking; each entry: rank,
-    previous_rank, id, title, year, media_type, mean, num_list_users, num_chapters,
-    publishing_status, authors, genres.
+    previous_rank, id, title, picture, year, media_type, mean, num_list_users,
+    num_chapters, publishing_status, authors, genres.
     """
     items, has_more = await _call_mal(
         lambda client: client.get_manga_ranking(ranking_type, limit=limit, offset=offset)
     )
     entries = [_compact_ranking_entry(item, "manga") for item in items]
-    return {
-        "ranking_type": ranking_type,
-        "total_returned": len(entries),
-        "offset": offset,
-        "has_more": has_more,
-        "entries": entries,
-    }
+    return ui_result(
+        "ranking",
+        {
+            "kind": "manga",
+            "ranking_type": ranking_type,
+            "total_returned": len(entries),
+            "offset": offset,
+            "has_more": has_more,
+            "entries": entries,
+        },
+        _summarize_ranking("manga", ranking_type, entries, offset, has_more),
+    )
 
 
 @mcp.tool(
-    annotations={"title": "Get Seasonal Anime", "readOnlyHint": True, "openWorldHint": True}
+    annotations={"title": "Get Seasonal Anime", "readOnlyHint": True, "openWorldHint": True},
+    meta=ui_tool_meta(),
 )
 async def get_seasonal_anime(
     year: Annotated[int, Field(ge=1917, le=2100, description="Broadcast year")],
@@ -829,12 +1065,13 @@ async def get_seasonal_anime(
     sort: SeasonalSort | None = "anime_score",
     limit: Annotated[int, Field(ge=1, le=500, description="Maximum entries to return")] = 25,
     offset: Annotated[int, Field(ge=0, description="Entries to skip for paging")] = 0,
-) -> dict[str, Any]:
+) -> ToolResult:
     """Fetch the anime that aired in one broadcast season (winter/spring/summer/fall).
 
     Seasons: winter = Jan-Mar, spring = Apr-Jun, summer = Jul-Sep, fall = Oct-Dec.
-    sort: anime_score (desc) or anime_num_list_users (desc). Returns {"year", "season",
-    "total_returned", "offset", "has_more", "entries"} with compact anime entries.
+    sort: anime_score (desc) or anime_num_list_users (desc). Returns a compact text
+    table plus structured content {"year", "season", "total_returned", "offset",
+    "has_more", "entries"} with compact anime entries (including picture).
     """
     items, has_more = await _call_mal(
         lambda client: client.get_seasonal_anime(
@@ -845,39 +1082,52 @@ async def get_seasonal_anime(
     for e in entries:
         e.pop("rank", None)
         e.pop("previous_rank", None)
-    return {
-        "year": year,
-        "season": season,
-        "total_returned": len(entries),
-        "offset": offset,
-        "has_more": has_more,
-        "entries": entries,
-    }
+    return ui_result(
+        "seasonal",
+        {
+            "kind": "anime",
+            "year": year,
+            "season": season,
+            "total_returned": len(entries),
+            "offset": offset,
+            "has_more": has_more,
+            "entries": entries,
+        },
+        _summarize_seasonal(year, season, entries, offset, has_more),
+    )
 
 
 @mcp.tool(
-    annotations={"title": "Get Suggested Anime", "readOnlyHint": True, "openWorldHint": True}
+    annotations={"title": "Get Suggested Anime", "readOnlyHint": True, "openWorldHint": True},
+    meta=ui_tool_meta(),
 )
 async def get_suggested_anime(
     limit: Annotated[int, Field(ge=1, le=100, description="Maximum suggestions to return")] = 25,
     offset: Annotated[int, Field(ge=0, description="Entries to skip for paging")] = 0,
-) -> dict[str, Any]:
+) -> ToolResult:
     """Fetch MyAnimeList's personalized anime suggestions for the authenticated user.
 
     These are MAL's own recommendations based on the user's list (empty for accounts
-    without watch history). Returns {"total_returned", "offset", "has_more", "results"}
-    with the same compact shape as search_anime.
+    without watch history). Returns a compact text table plus structured content
+    {"total_returned", "offset", "has_more", "results"} with the same compact shape
+    as search_anime.
     """
     items, has_more = await _call_mal(
         lambda client: client.get_suggested_anime(limit=limit, offset=offset)
     )
     results = [_compact_search_result(item.get("node") or {}) for item in items]
-    return {
-        "total_returned": len(results),
-        "offset": offset,
-        "has_more": has_more,
-        "results": results,
-    }
+    return ui_result(
+        "search",
+        {
+            "kind": "anime",
+            "suggested": True,
+            "total_returned": len(results),
+            "offset": offset,
+            "has_more": has_more,
+            "results": results,
+        },
+        _summarize_search("anime", results, None),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -886,9 +1136,10 @@ async def get_suggested_anime(
 
 
 @mcp.tool(
-    annotations={"title": "Get My Profile", "readOnlyHint": True, "openWorldHint": True}
+    annotations={"title": "Get My Profile", "readOnlyHint": True, "openWorldHint": True},
+    meta=ui_tool_meta(),
 )
-async def get_my_profile() -> dict[str, Any]:
+async def get_my_profile() -> ToolResult:
     """Fetch the authenticated user's MAL profile and lifetime anime statistics.
 
     Returns id, name, picture, birthday, location, joined_at, time_zone, is_supporter,
@@ -896,11 +1147,13 @@ async def get_my_profile() -> dict[str, Any]:
     mean score). MAL only exposes this endpoint for the token's own account.
     """
     data = await _call_mal(lambda client: client.get_my_profile())
-    return _compact_profile(data)
+    profile = _compact_profile(data)
+    return ui_result("dashboard", {"profile": profile}, _summarize_profile(profile))
 
 
 @mcp.tool(
-    annotations={"title": "Get User Anime List", "readOnlyHint": True, "openWorldHint": True}
+    annotations={"title": "Get User Anime List", "readOnlyHint": True, "openWorldHint": True},
+    meta=ui_tool_meta(),
 )
 async def get_user_anime_list(
     user_name: Annotated[str, Field(min_length=1, description="MAL username (public list)")],
@@ -908,7 +1161,7 @@ async def get_user_anime_list(
     sort: SortOrder | None = None,
     limit: Annotated[int, Field(ge=1, le=1000, description="Maximum entries to return")] = 100,
     offset: Annotated[int, Field(ge=0, description="Entries to skip for paging")] = 0,
-) -> dict[str, Any]:
+) -> ToolResult:
     """Fetch a page of ANOTHER MAL user's anime list (works only for public lists).
 
     Same paged shape as get_my_anime_list, plus "user_name" echoed in the response.
@@ -922,17 +1175,24 @@ async def get_user_anime_list(
     entries = [_compact_entry(edge) for edge in edges]
     for e in entries:
         e.pop("avg_episode_duration_sec", None)
-    return {
-        "user_name": user_name,
-        "total_returned": len(entries),
-        "offset": offset,
-        "has_more": has_more,
-        "entries": entries,
-    }
+    return ui_result(
+        "list",
+        {
+            "kind": "anime",
+            "editable": False,
+            "user_name": user_name,
+            "total_returned": len(entries),
+            "offset": offset,
+            "has_more": has_more,
+            "entries": entries,
+        },
+        _summarize_list("anime", entries, offset, has_more, user_name=user_name),
+    )
 
 
 @mcp.tool(
-    annotations={"title": "Get User Manga List", "readOnlyHint": True, "openWorldHint": True}
+    annotations={"title": "Get User Manga List", "readOnlyHint": True, "openWorldHint": True},
+    meta=ui_tool_meta(),
 )
 async def get_user_manga_list(
     user_name: Annotated[str, Field(min_length=1, description="MAL username (public list)")],
@@ -940,7 +1200,7 @@ async def get_user_manga_list(
     sort: MangaSortOrder | None = None,
     limit: Annotated[int, Field(ge=1, le=1000, description="Maximum entries to return")] = 100,
     offset: Annotated[int, Field(ge=0, description="Entries to skip for paging")] = 0,
-) -> dict[str, Any]:
+) -> ToolResult:
     """Fetch a page of ANOTHER MAL user's manga list (works only for public lists).
 
     Same paged shape as get_my_manga_list, plus "user_name" echoed in the response.
@@ -952,13 +1212,19 @@ async def get_user_manga_list(
         )
     )
     entries = [_compact_manga_entry(edge) for edge in edges]
-    return {
-        "user_name": user_name,
-        "total_returned": len(entries),
-        "offset": offset,
-        "has_more": has_more,
-        "entries": entries,
-    }
+    return ui_result(
+        "list",
+        {
+            "kind": "manga",
+            "editable": False,
+            "user_name": user_name,
+            "total_returned": len(entries),
+            "offset": offset,
+            "has_more": has_more,
+            "entries": entries,
+        },
+        _summarize_list("manga", entries, offset, has_more, user_name=user_name),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1100,6 +1366,9 @@ async def delete_my_manga_entry(
     """
     await _call_mal(lambda client: client.delete_manga_list_status(manga_id))
     return {"deleted": True, "manga_id": manga_id}
+
+
+register_ui(mcp)
 
 
 def main() -> None:

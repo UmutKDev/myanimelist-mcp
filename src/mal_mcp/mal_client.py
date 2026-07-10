@@ -19,33 +19,35 @@ MAL_API_BASE = "https://api.myanimelist.net/v2"
 # and reused (no per-anime requests - MAL rate limiting is aggressive and undocumented).
 LIST_FIELDS = (
     "list_status,num_episodes,genres,mean,media_type,status,"
-    "start_season,average_episode_duration,studios,rating"
+    "start_season,average_episode_duration,studios,rating,main_picture"
 )
-SEARCH_FIELDS = "mean,genres,media_type,num_episodes,status,start_season,synopsis"
+SEARCH_FIELDS = "mean,genres,media_type,num_episodes,status,start_season,synopsis,main_picture"
 DETAIL_FIELDS = (
     "alternative_titles,synopsis,mean,rank,popularity,num_list_users,num_scoring_users,"
     "genres,media_type,status,num_episodes,start_season,start_date,end_date,source,"
     "average_episode_duration,rating,studios,my_list_status,related_anime,"
-    "recommendations,statistics"
+    "recommendations,statistics,main_picture"
 )
 MANGA_LIST_FIELDS = (
     "list_status,num_chapters,num_volumes,genres,mean,media_type,status,"
-    "start_date,authors{first_name,last_name}"
+    "start_date,authors{first_name,last_name},main_picture"
 )
 MANGA_SEARCH_FIELDS = (
     "mean,genres,media_type,num_chapters,num_volumes,status,start_date,synopsis,"
-    "authors{first_name,last_name}"
+    "authors{first_name,last_name},main_picture"
 )
 MANGA_DETAIL_FIELDS = (
     "alternative_titles,synopsis,mean,rank,popularity,num_list_users,num_scoring_users,"
     "genres,media_type,status,num_chapters,num_volumes,start_date,end_date,"
     "authors{first_name,last_name},serialization{name},my_list_status,related_anime,"
-    "related_manga,recommendations"
+    "related_manga,recommendations,main_picture"
 )
-RANKING_ANIME_FIELDS = "mean,genres,media_type,num_episodes,status,start_season,num_list_users"
+RANKING_ANIME_FIELDS = (
+    "mean,genres,media_type,num_episodes,status,start_season,num_list_users,main_picture"
+)
 RANKING_MANGA_FIELDS = (
     "mean,genres,media_type,num_chapters,num_volumes,status,start_date,num_list_users,"
-    "authors{first_name,last_name}"
+    "authors{first_name,last_name},main_picture"
 )
 PROFILE_FIELDS = "anime_statistics,time_zone,is_supporter"
 

@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .DS_Store
+node_modules/
+src/mal_mcp/ui/dist/

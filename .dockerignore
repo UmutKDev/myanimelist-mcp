@@ -8,3 +8,6 @@ PLAN.md
 Dockerfile
 .dockerignore
 .python-version
+ui/node_modules/
+src/mal_mcp/ui/dist/
+.claude/

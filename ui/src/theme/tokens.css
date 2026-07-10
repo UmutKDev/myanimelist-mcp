@@ -1,0 +1,63 @@
+/* Design tokens — dark-first "midnight broadcast" theme.
+   Host-provided variables (--mcp-*) win when present; every token has a fallback. */
+
+:root {
+  /* Surfaces */
+  --bg: var(--mcp-color-background-primary, #0b0e17);
+  --bg-elev: var(--mcp-color-background-secondary, #121727);
+  --panel: color-mix(in srgb, #ffffff 6%, transparent);
+  --panel-strong: color-mix(in srgb, #ffffff 10%, transparent);
+  --line: color-mix(in srgb, #ffffff 10%, transparent);
+
+  /* Text */
+  --text: var(--mcp-color-text-primary, #e8eaf2);
+  --text-dim: var(--mcp-color-text-secondary, #8a91a8);
+  --text-faint: color-mix(in srgb, var(--text) 38%, transparent);
+
+  /* Accents — violet -> cyan aurora; gold for scores */
+  --accent-1: #7c5cff;
+  --accent-2: #34c8ff;
+  --aurora: linear-gradient(100deg, var(--accent-1), var(--accent-2));
+  --gold: #ffc44d;
+  --danger: #f87171;
+  --ok: #34d399;
+
+  /* Watch-status hues */
+  --st-watching: #34d399;
+  --st-completed: #60a5fa;
+  --st-on_hold: #fbbf24;
+  --st-dropped: #f87171;
+  --st-plan: #a78bfa;
+
+  /* Shape & depth */
+  --radius: 14px;
+  --radius-sm: 9px;
+  --shadow: 0 10px 30px rgb(0 0 0 / 0.35);
+  --blur: blur(14px);
+
+  /* Type */
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Safe-area insets pushed by the host */
+  --safe-top: 0px;
+  --safe-right: 0px;
+  --safe-bottom: 0px;
+  --safe-left: 0px;
+
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bg: var(--mcp-color-background-primary, #f4f6fb);
+  --bg-elev: var(--mcp-color-background-secondary, #ffffff);
+  --panel: color-mix(in srgb, #0b0e17 5%, transparent);
+  --panel-strong: color-mix(in srgb, #0b0e17 9%, transparent);
+  --line: color-mix(in srgb, #0b0e17 12%, transparent);
+  --text: var(--mcp-color-text-primary, #171a24);
+  --text-dim: var(--mcp-color-text-secondary, #5b6377);
+  --shadow: 0 10px 30px rgb(15 20 40 / 0.12);
+  --gold: #b07d10;
+
+  color-scheme: light;
+}

@@ -52,6 +52,7 @@ class TestCompactEntry:
         assert e == {
             "id": 5114,
             "title": "Fullmetal Alchemist: Brotherhood",
+            "picture": "https://example/m.jpg",
             "year": 2009,
             "media_type": "tv",
             "airing_status": "finished_airing",
@@ -77,6 +78,7 @@ class TestCompactEntry:
         assert e["genres"] == []
         assert e["year"] is None
         assert e["my_status"] is None
+        assert e["picture"] is None
 
 
 class TestComputeStats:
@@ -191,6 +193,10 @@ class TestSearchAndDetailCompaction:
         assert result["year"] == 2020
         assert result["num_episodes"] == 0
 
+    def test_search_result_includes_picture(self):
+        node = {"id": 1, "title": "X", "main_picture": {"medium": "https://example/m.jpg"}}
+        assert _compact_search_result(node)["picture"] == "https://example/m.jpg"
+
     def test_detail_compaction(self):
         data = {
             "id": 1,
@@ -220,6 +226,19 @@ class TestSearchAndDetailCompaction:
 
     def test_detail_omits_absent_my_list_status(self):
         assert "my_list_status" not in _compact_detail({"id": 1, "title": "X"})
+
+    def test_detail_pictures_fall_back_to_medium(self):
+        # 'large' is optional on MAL; picture_large falls back to medium, both None when absent.
+        detail = _compact_detail({"id": 1, "main_picture": {"medium": "https://example/m.jpg"}})
+        assert detail["picture"] == "https://example/m.jpg"
+        assert detail["picture_large"] == "https://example/m.jpg"
+        both = _compact_detail(
+            {"id": 1, "main_picture": {"medium": "m.jpg", "large": "l.jpg"}}
+        )
+        assert both["picture_large"] == "l.jpg"
+        empty = _compact_detail({"id": 1})
+        assert empty["picture"] is None
+        assert empty["picture_large"] is None
 
 
 class _FakeManager:

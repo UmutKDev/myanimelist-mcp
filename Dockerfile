@@ -1,7 +1,16 @@
+# Build the MCP Apps UI into one self-contained HTML file first.
+FROM node:22-slim AS ui-build
+
+WORKDIR /build
+COPY ui/package.json ui/package-lock.json ./ui/
+RUN cd ui && npm ci --no-fund --no-audit
+COPY ui ./ui
+RUN cd ui && npm run build   # emits /build/src/mal_mcp/ui/dist/index.html
+
 FROM python:3.12-slim
 
 LABEL org.opencontainers.image.source="https://github.com/UmutKDev/myanimelist-mcp" \
-      org.opencontainers.image.description="Stateless MyAnimeList MCP server (streamable-http)" \
+      org.opencontainers.image.description="Stateless MyAnimeList MCP server (streamable-http) with an MCP Apps UI" \
       org.opencontainers.image.licenses="MIT"
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
@@ -20,6 +29,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # README.md is needed here because hatchling builds the project (readme metadata).
 COPY README.md ./
 COPY src ./src
+COPY --from=ui-build /build/src/mal_mcp/ui/dist ./src/mal_mcp/ui/dist
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 

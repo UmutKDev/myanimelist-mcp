@@ -83,8 +83,45 @@ pass (safety cap: 20,000 entries — beyond that a `truncated`/WARNING marker is
 `paging.next` URLs are validated (https + `api.myanimelist.net`) before being followed, so
 the bearer token can never be sent elsewhere.
 
-All tools are read-only. Facts about the MAL API this server relies on (fields syntax,
-pagination, limits, error shapes) are documented in [NOTES.md](NOTES.md).
+Every tool except the four write tools above is read-only. Facts about the MAL API this
+server relies on (fields syntax, pagination, limits, error shapes) are documented in
+[NOTES.md](NOTES.md).
+
+## MCP Apps UI
+
+The 14 read tools double as interactive views via
+[MCP Apps (SEP-1865)](https://github.com/modelcontextprotocol/ext-apps): on hosts that
+support the extension, tool results render as a dark-cinematic anime UI inside the chat —
+cover-art grids, a detail hero page with inline list editing (status/score/progress saved
+through `update_my_*_entry`), a filterable list browser, rankings with movement
+indicators, seasonal grids, and a statistics dashboard. On hosts without MCP Apps
+support nothing changes — the same tools return their text summaries.
+
+- **How it works:** each UI tool carries `_meta.ui.resourceUri` pointing at the
+  `ui://mal-mcp/app.html` resource (a single self-contained HTML bundle served by the
+  server). The model sees a compact text table; the full payload travels as
+  `structuredContent` to the iframe. UI-initiated actions (edits, load-more, detail
+  navigation) go through `callServerTool`, i.e. normal `tools/call` requests — the
+  stateless token handling applies unchanged.
+- **CSP:** cover art is loaded from `cdn.myanimelist.net` / `api-cdn.myanimelist.net`,
+  declared in the resource's `_meta.ui.csp.resourceDomains`. Everything else is inlined.
+- **Host support:** Claude (claude.ai / Desktop), ChatGPT, VS Code, Goose, Postman,
+  MCPJam, and other SEP-1865 hosts.
+
+### Building the UI
+
+```bash
+cd ui
+npm ci
+npm run build   # emits src/mal_mcp/ui/dist/index.html (single file)
+```
+
+The bundle is gitignored; the Docker build produces it in a `node:22` stage, and the
+wheel ships it via hatchling `artifacts`. Without a built bundle the server still runs —
+the resource serves a small placeholder page instead.
+
+For hostless UI development: `npm run dev` inside `ui/` renders every view with fixture
+data and a view switcher (tool calls resolve from fixtures too).
 
 ## MAL application registration
 
@@ -250,7 +287,7 @@ npx @modelcontextprotocol/inspector
 
 In the Inspector UI: transport **Streamable HTTP**, URL `http://localhost:8000/mcp`, and add
 a custom header `Authorization: Bearer <your MAL access token>`. `tools/list` should show
-the five tools; `get_my_anime_list` / `get_user_stats` return your real data.
+all 19 tools; `get_my_anime_list` / `get_user_stats` return your real data.
 
 ### Quick smoke test with curl
 
@@ -292,9 +329,13 @@ serves the MCP endpoint at `/mcp`.
 
 ```
 src/mal_mcp/
-├── server.py       # FastMCP app, bearer-token helper, 5 tools, stats/format helpers
-└── mal_client.py   # MAL API wrapper: fields, pagination (paging.next), retries, error mapping
-tests/test_stats.py # unit tests for the pure helpers
+├── server.py       # FastMCP app, bearer-token helper, 19 tools, stats/format/summary helpers
+├── mal_client.py   # MAL API wrapper: fields, pagination (paging.next), retries, error mapping
+├── token_manager.py# self-renewing OAuth refresh_token grant (in-memory)
+└── ui/             # MCP Apps layer: ui:// resource + meta/ToolResult helpers
+    └── dist/       # built single-file HTML bundle (gitignored; built from ui/)
+ui/                 # Vite + React + TypeScript app (motion animations, 6 views)
+tests/              # offline unit tests (pure helpers, token manager, UI contract)
 NOTES.md            # verified MAL API / FastMCP / Obot facts (source for the choices above)
 PLAN.md             # design plan
 ```
