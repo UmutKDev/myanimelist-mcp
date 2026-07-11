@@ -38,14 +38,14 @@ _PLACEHOLDER_HTML = """<!doctype html>
   html, body { margin: 0; height: 100%; }
   body {
     display: flex; align-items: center; justify-content: center;
-    background: #0b0e17; color: #e8eaf2;
+    background: #efe7d5; color: #211d15;
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   }
   .card { text-align: center; padding: 40px; }
   h1 {
-    font-size: 20px; font-weight: 700; margin: 0 0 8px;
-    background: linear-gradient(90deg, #7c5cff, #34c8ff);
-    -webkit-background-clip: text; background-clip: text; color: transparent;
+    font-size: 22px; font-weight: 600; margin: 0 0 8px;
+    font-family: "Shippori Mincho", "Hiragino Mincho ProN", "Yu Mincho", Georgia, serif;
+    color: #c33a25;
   }
   p { margin: 0; font-size: 13px; opacity: 0.7; }
   code { font-family: ui-monospace, monospace; }

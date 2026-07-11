@@ -16,6 +16,17 @@ const DAY_LABEL: Record<string, string> = {
   unscheduled: "Unscheduled",
 };
 
+/** Weekday kanji marks (月火水木金土日) shown alongside the Latin label. */
+const DAY_KANJI: Record<string, string> = {
+  monday: "月",
+  tuesday: "火",
+  wednesday: "水",
+  thursday: "木",
+  friday: "金",
+  saturday: "土",
+  sunday: "日",
+};
+
 function ScheduleCard({ entry, index }: { entry: ScheduleEntry; index: number }) {
   const { openDetail } = useNav();
   const reduced = useReducedMotion();
@@ -98,6 +109,11 @@ export function ScheduleView({ payload }: { payload: SchedulePayload }) {
               transition={{ delay: Math.min(ci * 0.05, 0.4), duration: 0.3 }}
             >
               <div className="day-head">
+                {DAY_KANJI[d.day] && (
+                  <span className="day-head-kanji" aria-hidden="true">
+                    {DAY_KANJI[d.day]}
+                  </span>
+                )}
                 <span className="day-head-name">{DAY_LABEL[d.day]}</span>
                 {today && <span className="today-pill">Today</span>}
               </div>

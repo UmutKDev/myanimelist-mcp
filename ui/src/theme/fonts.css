@@ -1,0 +1,44 @@
+/* Self-hosted Latin subsets — vendored under ../fonts and inlined into the
+   single-file bundle by viteSingleFile (assetsInlineLimit: 100MB). No CSP change,
+   no runtime network. Japanese glyphs we render (kanji weekday marks, seal) and
+   MAL's own Japanese alt-titles fall back to the OS Mincho/Gothic stack. */
+
+@font-face {
+  font-family: "Shippori Mincho";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("../fonts/shippori-mincho-600.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Shippori Mincho";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../fonts/shippori-mincho-700.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Zen Kaku Gothic New";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../fonts/zen-kaku-gothic-new-400.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Zen Kaku Gothic New";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../fonts/zen-kaku-gothic-new-500.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Zen Kaku Gothic New";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../fonts/zen-kaku-gothic-new-700.woff2") format("woff2");
+}

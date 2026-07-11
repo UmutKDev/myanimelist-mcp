@@ -4,7 +4,7 @@ import { motion, useReducedMotion } from "motion/react";
 export function ProgressBar({
   current,
   total,
-  color = "var(--accent-2)",
+  color = "var(--accent-1)",
 }: {
   current: number;
   total: number;

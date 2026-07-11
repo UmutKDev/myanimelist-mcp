@@ -61,9 +61,9 @@ export function Dashboard({ payload }: { payload: DashboardPayload }) {
         <header className="profile-head">
           <div
             className="avatar-ring"
-            style={{ background: `conic-gradient(from 200deg, var(--accent-1), var(--accent-2), var(--accent-1))` }}
+            style={{ background: `conic-gradient(from 200deg, var(--accent-1), var(--gold), var(--accent-1))` }}
           >
-            <div className="avatar" style={{ background: `hsl(${hueOf(profile.name ?? "?")} 45% 30%)` }}>
+            <div className="avatar" style={{ background: `hsl(${hueOf(profile.name ?? "?")} 24% 38%)` }}>
               {profile.picture ? (
                 <img src={profile.picture} alt={profile.name ?? "avatar"} />
               ) : (
@@ -191,7 +191,7 @@ export function Dashboard({ payload }: { payload: DashboardPayload }) {
                     <span className="ranked-name">{genre.name}</span>
                     <Bar
                       fraction={genre.count / genreMax}
-                      color={`hsl(${hueOf(genre.name)} 65% 62%)`}
+                      color={`hsl(${hueOf(genre.name)} 32% 48%)`}
                       delay={i * 0.06}
                     />
                     <span className="num ranked-count">{genre.count}</span>

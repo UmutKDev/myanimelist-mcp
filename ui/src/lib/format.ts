@@ -9,16 +9,17 @@ export function hueOf(title: string): number {
   return Math.abs(hash) % 360;
 }
 
-/** Cover placeholder / ambient glow gradient derived from the title. */
+/** Cover placeholder gradient derived from the title — muted, dusty duotone so a
+ *  missing/loading poster reads as a refined washi block, not a saturated navy. */
 export function titleGradient(title: string): string {
   const h = hueOf(title);
   return `linear-gradient(160deg,
-    hsl(${h} 45% 24%) 0%,
-    hsl(${(h + 40) % 360} 55% 14%) 100%)`;
+    hsl(${h} 22% 42%) 0%,
+    hsl(${(h + 30) % 360} 26% 28%) 100%)`;
 }
 
 export function titleGlow(title: string): string {
-  return `hsl(${hueOf(title)} 70% 60% / 0.35)`;
+  return `hsl(${hueOf(title)} 26% 40% / 0.24)`;
 }
 
 /** 1234567 -> "1.2M", 4321 -> "4.3k" */
@@ -81,11 +82,11 @@ export function statusColor(status: string | null | undefined): string {
 }
 
 export function seasonLabel(season: string): string {
-  const icons: Record<string, string> = {
-    winter: "❄",
-    spring: "🌸",
-    summer: "☀",
-    fall: "🍂",
+  const kanji: Record<string, string> = {
+    winter: "冬",
+    spring: "春",
+    summer: "夏",
+    fall: "秋",
   };
-  return `${icons[season] ?? ""} ${label(season)}`.trim();
+  return `${kanji[season] ?? ""} ${label(season)}`.trim();
 }

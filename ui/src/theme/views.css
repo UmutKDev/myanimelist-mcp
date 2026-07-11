@@ -279,12 +279,12 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: blur(26px) saturate(1.25);
-  opacity: 0.5;
+  filter: blur(26px) saturate(1.1);
+  opacity: 0.3;
 }
 
-:root[data-theme="light"] .detail-backdrop img {
-  opacity: 0.35;
+:root[data-theme="dark"] .detail-backdrop img {
+  opacity: 0.5;
 }
 
 .detail-backdrop-veil {
@@ -697,8 +697,8 @@
 
 .decade-bar {
   width: 26px;
-  border-radius: 5px 5px 2px 2px;
-  background: color-mix(in srgb, var(--accent-1) 75%, var(--accent-2));
+  border-radius: 2px 2px 0 0;
+  background: color-mix(in srgb, var(--accent-1) 85%, transparent);
 }
 
 .decade-label {
@@ -745,6 +745,14 @@
   color: var(--text-dim);
 }
 
+.day-head-kanji {
+  font-family: var(--font-jp);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-faint);
+}
+
 .day-head-name {
   font-size: 12px;
 }
@@ -753,14 +761,18 @@
   color: var(--text);
 }
 
+.day-col.is-today .day-head-kanji {
+  color: var(--accent-1);
+}
+
 .today-pill {
   font-size: 8.5px;
   font-weight: 700;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   padding: 2px 6px;
-  border-radius: 999px;
-  background: var(--aurora);
+  border-radius: 2px;
+  background: var(--accent-1);
   color: #fff;
   white-space: nowrap;
 }
@@ -809,13 +821,11 @@
   left: 5px;
   bottom: 5px;
   padding: 2px 7px;
-  border-radius: 999px;
-  background: rgb(8 10 18 / 0.82);
+  border-radius: var(--radius-sm);
+  background: rgb(23 19 13 / 0.82);
   color: #fff;
   font-size: 11px;
   font-weight: 700;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
 }
 
 .sched-title {
