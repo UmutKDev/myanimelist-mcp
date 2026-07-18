@@ -21,6 +21,7 @@ import statistics
 from collections import Counter, defaultdict
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
+from functools import lru_cache
 from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -552,8 +553,26 @@ def _build_changes(**kwargs: Any) -> dict[str, Any]:
 # Weekly schedule helpers (unit-tested in tests/test_schedule.py)
 # ---------------------------------------------------------------------------
 
-JST = ZoneInfo("Asia/Tokyo")  # MAL broadcast times are Japan Standard Time
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+
+@lru_cache(maxsize=1)
+def _jst() -> ZoneInfo:
+    """Japan Standard Time - MAL reports every broadcast slot in it.
+
+    Resolved lazily rather than at import: a missing IANA database would otherwise
+    kill the whole server (all 20 tools) at startup over a constant that only the
+    schedule tool needs. `tzdata` is a hard dependency precisely so slim containers
+    without a system tz database still work, so this normally cannot fail.
+    """
+    try:
+        return ZoneInfo("Asia/Tokyo")
+    except ZoneInfoNotFoundError as exc:
+        raise ToolError(
+            "No IANA time zone database is available in this environment, so broadcast "
+            "times cannot be computed. This usually means the 'tzdata' package is "
+            "missing; reinstalling myanimelist-mcp should restore it."
+        ) from exc
 
 
 def _effective_tz_name(param: str | None) -> str | None:
@@ -606,7 +625,7 @@ def _convert_broadcast(
         return day, None  # known day, unknown time (rare)
     hour, minute = parsed
     extra_days, hour = divmod(hour, 24)  # normalize '25:00' -> +1 day, 01:00
-    jst_now = now.astimezone(JST)
+    jst_now = now.astimezone(_jst())
     delta = (WEEKDAYS.index(day) - jst_now.weekday()) % 7
     slot = jst_now.replace(hour=hour, minute=minute, second=0, microsecond=0) + timedelta(
         days=delta + extra_days
@@ -1339,11 +1358,12 @@ async def get_weekly_schedule(
     """
     tz_name = _effective_tz_name(timezone)
     target_tz = _resolve_timezone(tz_name)
-    now = datetime.now(JST)
+    jst = _jst()
+    now = datetime.now(jst)
     edges = await _fetch_watching_edges()
     days, total = _build_schedule(edges, target_tz, now=now)
     tz_label = tz_name or "Asia/Tokyo"
-    today = WEEKDAYS[now.astimezone(target_tz or JST).weekday()]
+    today = WEEKDAYS[now.astimezone(target_tz or jst).weekday()]
     return ui_result(
         "schedule",
         {"timezone": tz_label, "today": today, "total": total, "days": days},

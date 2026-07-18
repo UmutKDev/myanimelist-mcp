@@ -123,6 +123,21 @@ the move to stdio + PyPI.
   starlette + `mcp` at module scope, which only arrive via the `[client,server]` extras.
   Switching to `fastmcp-slim` is an `ImportError` at import time, not a graceful degrade.
 
+## Time zones (learned the hard way in 0.5.0)
+
+- **`tzdata` must stay a hard dependency.** CPython's `zoneinfo` reads the *system* IANA
+  database (`/usr/share/zoneinfo`, …) and only falls back to the `tzdata` PyPI package when
+  that is absent. macOS and the GitHub `ubuntu-latest` runners both ship system tz data, so a
+  missing `tzdata` is **invisible in local and CI testing** — 0.5.0 shipped without it, passed
+  everything, and then crash-looped in a slim container (`ZoneInfoNotFoundError: 'No time zone
+  found with key Asia/Tokyo'`, exit status 1, every restart).
+- Reproduce that environment anywhere with **`PYTHONTZPATH=""`**, which empties zoneinfo's
+  search path and forces the packaged fallback. The release workflow runs its stdio smoke test
+  under exactly that setting.
+- Resolve zones **lazily**, never at module import: `JST` used to be a module-level constant,
+  so one missing database took down all 20 tools instead of just `get_weekly_schedule`. It is
+  now `_jst()` (`@lru_cache`), raising an actionable `ToolError`.
+
 ## MCP Apps over stdio
 
 - SEP-1865 is **Final**, and `ui://` resources are transport-independent — the app↔host channel

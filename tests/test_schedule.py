@@ -6,10 +6,12 @@ from zoneinfo import ZoneInfo
 import pytest
 from fastmcp.exceptions import ToolError
 
+import mal_mcp.server as server
 from mal_mcp.server import (
     _build_schedule,
     _convert_broadcast,
     _effective_tz_name,
+    _jst,
     _resolve_timezone,
     _summarize_schedule,
 )
@@ -17,6 +19,34 @@ from mal_mcp.server import (
 # A fixed anchor so day/time math is deterministic. This is a Wednesday in JST.
 NOW = datetime(2026, 7, 8, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
 IST = ZoneInfo("Europe/Istanbul")  # JST-6h in summer
+
+
+class TestTimeZoneDatabase:
+    """0.5.0 shipped without `tzdata` and crash-looped on any host lacking system tz data."""
+
+    def test_tzdata_package_is_installed(self):
+        # The declared dependency is the only thing that makes ZoneInfo work in a
+        # slim container. macOS and the CI runners hide its absence, so assert it.
+        import tzdata  # noqa: F401
+
+    def test_jst_resolves(self):
+        assert _jst().key == "Asia/Tokyo"
+
+    def test_missing_tz_database_raises_a_tool_error_not_an_import_crash(self, monkeypatch):
+        # A missing database must surface as an actionable ToolError from the one tool
+        # that needs it - never as an exception at module import that kills all 20.
+        from zoneinfo import ZoneInfoNotFoundError
+
+        def no_database(_key):
+            raise ZoneInfoNotFoundError("No time zone found with key Asia/Tokyo")
+
+        _jst.cache_clear()
+        monkeypatch.setattr(server, "ZoneInfo", no_database)
+        try:
+            with pytest.raises(ToolError, match="tzdata"):
+                _jst()
+        finally:
+            _jst.cache_clear()
 
 
 def _edge(status="currently_airing", day="friday", start="23:00", **node):

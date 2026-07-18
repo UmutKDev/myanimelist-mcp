@@ -25,6 +25,11 @@ dependencies = [
     # imports starlette + mcp at module scope, which arrive only via the [client,server] extras.
     "fastmcp>=3.4,<4",
     "httpx>=0.28",
+    # The IANA tz database. zoneinfo falls back to this package when the host has no
+    # system tz data - which is the case in slim containers, where ZoneInfo("Asia/Tokyo")
+    # would otherwise raise ZoneInfoNotFoundError. Do not drop it: macOS and the GitHub
+    # runners both ship system tz data, so its absence is invisible in local/CI testing.
+    "tzdata>=2025.1",
 ]
 
 # Script name == distribution name so bare `uvx myanimelist-mcp` works.

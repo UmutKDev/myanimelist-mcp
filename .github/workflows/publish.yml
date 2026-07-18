@@ -89,7 +89,13 @@ jobs:
       # The dist guard only inspects file entries. This proves the wheel actually
       # installs, imports, exposes the console script, and completes an MCP handshake -
       # catching a broken `packages`/entry-point regression that a file listing cannot.
-      - name: Smoke-test the built wheel over stdio
+      #
+      # PYTHONTZPATH="" empties zoneinfo's system search path, forcing the bundled
+      # `tzdata` package to satisfy ZoneInfo(). This runner ships system tz data, which
+      # is exactly why 0.5.0 passed CI and then crash-looped on a slim container.
+      - name: Smoke-test the built wheel over stdio (no system tz database)
+        env:
+          PYTHONTZPATH: ""
         run: |
           uv run --isolated --no-project --with dist/*.whl python - <<'PY'
           import asyncio
