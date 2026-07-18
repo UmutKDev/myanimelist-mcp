@@ -6,7 +6,7 @@ description: Use when adding a new MCP tool to the MAL server — the lockstep c
 # Add an MCP tool
 
 Adding a tool touches several files in lockstep. Canonical read example: `get_my_anime_list`
-(`server.py:882`). Skipping a step (especially test registration or the `fields` param) breaks
+(`server.py:888`). Skipping a step (especially test registration or the `fields` param) breaks
 the tool or the test suite. Read the surrounding code before writing — match the house style.
 
 ## Checklist

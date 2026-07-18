@@ -1,5 +1,10 @@
 # PLAN — mal-mcp
 
+> **Historical.** This is the original design doc, written when the server was a
+> streamable-HTTP container behind an Obot gateway. It is kept for the tool/architecture
+> rationale below. The server now ships on PyPI as `myanimelist-mcp` and runs over **stdio**;
+> see `CLAUDE.md` and `README.md` for how things actually work today.
+
 Stateless MCP server exposing a user's MyAnimeList data as MCP tools. Runs as streamable-http
 behind an Obot MCP gateway; the OAuth flow lives entirely in the gateway. Every request must carry
 `Authorization: Bearer <MAL access token>`, which the server forwards verbatim to the MAL API.

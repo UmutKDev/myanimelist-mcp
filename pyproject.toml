@@ -1,13 +1,41 @@
 [project]
-name = "mal-mcp"
-version = "0.4.3"
-description = "Stateless MyAnimeList MCP server (streamable-http) with an MCP Apps UI, designed to run behind an Obot MCP gateway"
+name = "myanimelist-mcp"
+dynamic = ["version"]
+description = "MyAnimeList MCP server: browse and edit your anime and manga lists, with an embedded UI"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Umut Kızıloğlu", email = "umut.kiziloglu@icloud.com" }]
+keywords = ["mcp", "model-context-protocol", "mcp-apps", "myanimelist", "mal", "anime", "manga"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
 dependencies = [
+    # Must be the `fastmcp` metapackage, NOT `fastmcp-slim`: fastmcp.server.dependencies
+    # imports starlette + mcp at module scope, which arrive only via the [client,server] extras.
     "fastmcp>=3.4,<4",
     "httpx>=0.28",
 ]
+
+# Script name == distribution name so bare `uvx myanimelist-mcp` works.
+[project.scripts]
+myanimelist-mcp = "mal_mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/UmutKDev/myanimelist-mcp"
+Repository = "https://github.com/UmutKDev/myanimelist-mcp"
+Issues = "https://github.com/UmutKDev/myanimelist-mcp/issues"
+Changelog = "https://github.com/UmutKDev/myanimelist-mcp/releases"
 
 [dependency-groups]
 dev = [
@@ -15,14 +43,26 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+# >=1.27 is the first hatchling defaulting to core metadata 2.4 (License-Expression).
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
-# The built UI bundle is gitignored but must ship in BOTH the sdist and the
-# wheel (the default build path is sdist -> wheel, so wheel-only is not enough).
+# Single source of truth for the version.
+# NOTE: a dynamic version disables `uv version` / `uv version --bump` - bump by hand.
+[tool.hatch.version]
+path = "src/mal_mcp/__init__.py"
+
+# The built UI bundle is gitignored but must ship in BOTH the sdist and the wheel
+# (bare `uv build` is sdist -> wheel-from-sdist, so wheel-only is not enough).
+# Do NOT also declare `artifacts` under a target table: target keys override this one.
 [tool.hatch.build]
 artifacts = ["src/mal_mcp/ui/dist/**"]
 
+[tool.hatch.build.targets.sdist]
+exclude = ["/.github", "/.claude", "/docs", "/ui/node_modules", "/CLAUDE.md", "/PLAN.md", "/NOTES.md"]
+
+# Mandatory: the distribution name differs from the import package, so hatchling's
+# name heuristic (which would look for src/myanimelist_mcp/) must be overridden.
 [tool.hatch.build.targets.wheel]
 packages = ["src/mal_mcp"]
 

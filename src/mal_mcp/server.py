@@ -1,15 +1,17 @@
-"""MyAnimeList MCP server (streamable-http, stateless).
+"""MyAnimeList MCP server (stdio).
+
+The MCP client launches this process and speaks JSON-RPC over stdin/stdout, so
+credentials arrive as environment variables (the "env" block of the server's
+entry in claude_desktop_config.json / .mcp.json).
 
 Token handling, in precedence order:
 
-1. Per-request ``Authorization: Bearer <MAL access token>`` header (e.g. an MCP
-   gateway such as Obot performing the OAuth flow) - forwarded as-is, never stored.
-2. Self-renewing mode: when MAL_REFRESH_TOKEN and MAL_CLIENT_ID (optionally
+1. Self-renewing mode: when MAL_REFRESH_TOKEN and MAL_CLIENT_ID (optionally
    MAL_CLIENT_SECRET) are set, the server mints and renews access tokens itself
    via OAuth's refresh_token grant. The current tokens are held in process memory
    only - nothing is written to disk, and no token material appears in logs or
    error messages. There is still no interactive OAuth login flow here.
-3. Static MAL_ACCESS_TOKEN env var - forwarded as-is.
+2. Static MAL_ACCESS_TOKEN env var - forwarded as-is (expires ~31 days).
 """
 
 from __future__ import annotations
@@ -24,10 +26,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
-from fastmcp.server.dependencies import get_http_headers
 from fastmcp.tools import ToolResult
 from pydantic import Field
 
+from mal_mcp import __version__
 from mal_mcp.mal_client import MALClient, MALError, MALTokenError
 from mal_mcp.token_manager import TokenManager, TokenRefreshError
 from mal_mcp.ui import register_ui, ui_result, ui_tool_meta
@@ -43,7 +45,9 @@ MangaRankingType = Literal[
 Season = Literal["winter", "spring", "summer", "fall"]
 SeasonalSort = Literal["anime_score", "anime_num_list_users"]
 
-mcp = FastMCP("mal_mcp")
+# version= surfaces in the MCP handshake's serverInfo, so clients (and bug reports)
+# show this package's version rather than FastMCP's own.
+mcp = FastMCP("mal_mcp", version=__version__)
 
 # Fallback when MAL reports no average_episode_duration (seconds; ~a typical TV episode).
 DEFAULT_EPISODE_SECONDS = 1440
@@ -74,18 +78,13 @@ def _strip_bearer(value: str) -> str:
 
 
 async def _resolve_token() -> tuple[str, TokenManager | None]:
-    """Pick the MAL token: Authorization header > refresh-token manager > static env.
+    """Pick the MAL token: refresh-token manager > static env.
 
     Returns (token, manager); manager is non-None only when the token came from the
     self-renewing TokenManager, so callers can invalidate + retry on a MAL 401.
     """
-    # fastmcp 3.x strips 'authorization' from get_http_headers() unless re-included.
-    headers = get_http_headers(include={"authorization"})
-    header_token = _strip_bearer(headers.get("authorization", ""))
-    if header_token:
-        return header_token, None
-
-    # Obot's containerized runtime delivers user credentials as env vars, not headers.
+    # Under stdio there is no HTTP request, so credentials come from the environment
+    # the MCP client launched this process with.
     manager = _token_manager()
     if manager is not None:
         try:
@@ -97,10 +96,29 @@ async def _resolve_token() -> tuple[str, TokenManager | None]:
     if env_token:
         return env_token, None
 
+    # The refresh grant needs BOTH vars, so half a config silently disables the
+    # manager above. Say which half is missing instead of "you configured nothing".
+    have_refresh = bool(os.getenv("MAL_REFRESH_TOKEN", "").strip())
+    have_client_id = bool(os.getenv("MAL_CLIENT_ID", "").strip())
+    if have_refresh != have_client_id:
+        missing, present = (
+            ("MAL_CLIENT_ID", "MAL_REFRESH_TOKEN")
+            if have_refresh
+            else ("MAL_REFRESH_TOKEN", "MAL_CLIENT_ID")
+        )
+        raise ToolError(
+            f"Incomplete MyAnimeList credentials: {present} is set but {missing} is not. "
+            "The self-renewing refresh grant needs both. Add the missing one to the "
+            '"env" block of this server\'s entry in your MCP client config. '
+            "Setup: https://github.com/UmutKDev/myanimelist-mcp#authentication"
+        )
+
     raise ToolError(
-        "No MAL access token. Provide one of: an 'Authorization: Bearer <token>' request "
-        "header (gateway OAuth), MAL_REFRESH_TOKEN + MAL_CLIENT_ID env vars (self-renewing, "
-        "recommended), or a static MAL_ACCESS_TOKEN env var. See the README."
+        'No MyAnimeList credentials configured. Add them to the "env" block of this '
+        "server's entry in your MCP client config (claude_desktop_config.json, .mcp.json): "
+        "MAL_REFRESH_TOKEN + MAL_CLIENT_ID (self-renewing, recommended; add "
+        "MAL_CLIENT_SECRET for a 'Web'-type MAL app), or MAL_ACCESS_TOKEN for a single "
+        "~31-day token. Setup: https://github.com/UmutKDev/myanimelist-mcp#authentication"
     )
 
 
@@ -1575,16 +1593,13 @@ register_ui(mcp)
 
 
 def main() -> None:
-    mcp.run(
-        transport="http",
-        host=os.getenv("HOST", "0.0.0.0"),
-        port=int(os.getenv("PORT", "8000")),
-        path="/mcp",
-        stateless_http=True,
-        # Plain JSON bodies instead of SSE frames: this server never emits
-        # notifications, and JSON survives gateways that rewrite Accept headers.
-        json_response=True,
-    )
+    """Console-script entry point: MCP over stdio.
+
+    show_banner=False because the banner performs a blocking 2s pypi.org version
+    check on every cold start (fastmcp/utilities/version_check.py), which every
+    client launch would otherwise wait through.
+    """
+    mcp.run(transport="stdio", show_banner=False)
 
 
 if __name__ == "__main__":

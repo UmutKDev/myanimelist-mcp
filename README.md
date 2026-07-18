@@ -1,34 +1,96 @@
-# mal-mcp
+# myanimelist-mcp
 
-A **stateless** [MCP](https://modelcontextprotocol.io) server that exposes your
+[![PyPI](https://img.shields.io/pypi/v/myanimelist-mcp)](https://pypi.org/project/myanimelist-mcp/)
+[![Python](https://img.shields.io/pypi/pyversions/myanimelist-mcp)](https://pypi.org/project/myanimelist-mcp/)
+[![License](https://img.shields.io/pypi/l/myanimelist-mcp)](https://github.com/UmutKDev/myanimelist-mcp/blob/main/LICENSE)
+
+An [MCP](https://modelcontextprotocol.io) server that exposes your
 [MyAnimeList](https://myanimelist.net) data — watch list, scores, progress, rankings,
 recommendations — as tools, plus a premium **[MCP Apps](https://github.com/modelcontextprotocol/ext-apps)
 UI** that renders those results as an interactive, anime-styled interface right inside the
 chat. Any assistant that speaks MCP can analyze your taste, browse seasons, and edit your
 list; on hosts that support MCP Apps it does so through the UI below.
 
-Python 3.12 · [FastMCP 3](https://gofastmcp.com) (streamable-HTTP) · React + Vite for the UI.
+Python 3.12 · [FastMCP 3](https://gofastmcp.com) (stdio) · React + Vite for the UI.
+
+## Installation
+
+Requires [uv](https://docs.astral.sh/uv/). No clone, no build, no Docker.
+
+```bash
+uvx myanimelist-mcp
+```
+
+The server speaks MCP over **stdio**: it prints nothing and waits on stdin for JSON-RPC, so
+running it by hand looks like a hang — that is correct behaviour. Your MCP client is what
+launches it. Add it to your client config — macOS
+`~/Library/Application Support/Claude/claude_desktop_config.json`,
+Windows `%APPDATA%\Claude\claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "myanimelist": {
+      "command": "uvx",
+      "args": ["myanimelist-mcp"],
+      "env": {
+        "MAL_CLIENT_ID": "your-client-id",
+        "MAL_CLIENT_SECRET": "your-client-secret",
+        "MAL_REFRESH_TOKEN": "your-refresh-token",
+        "MAL_TIMEZONE": "Europe/Istanbul"
+      }
+    }
+  }
+}
+```
+
+Then quit and reopen the client completely. See [Authentication](#authentication) for how to
+get those credentials.
+
+> **`spawn uvx ENOENT`?** Desktop clients launch servers with a minimal `PATH` that usually
+> excludes `~/.local/bin`. Run `which uvx` and put the absolute path in `"command"`.
+
+> **Your credentials live in that file in plaintext**, and stderr from this server is
+> persisted by some clients (e.g. `~/Library/Logs/Claude/`). Consider `chmod 600` on the
+> config, and revoke the MAL token if you ever share logs.
+
+For Claude Code:
+
+```bash
+claude mcp add --env MAL_CLIENT_ID=… --env MAL_REFRESH_TOKEN=… \
+  --transport stdio myanimelist -- uvx myanimelist-mcp
+```
+
+Pinning a version, or installing with pip instead:
+
+```bash
+uvx --from 'myanimelist-mcp==X.Y.Z' myanimelist-mcp
+pip install myanimelist-mcp   # then "command": "myanimelist-mcp"
+                              # or   "command": "python", "args": ["-m", "mal_mcp"]
+```
 
 ## The interface
 
-On MCP Apps hosts (claude.ai / Claude Desktop, ChatGPT, VS Code, Goose, MCPJam…), each read
-tool renders as a live view. The model still receives a compact text summary; the full data
-travels to the iframe as structured content.
+Each read tool ships a `ui://` app resource alongside its text summary, so hosts that support
+[MCP Apps](https://modelcontextprotocol.io/extensions/client-matrix) render the result as a
+live view. The model still receives the compact text summary; the full data travels to the
+iframe as structured content. Where the host has no MCP Apps support, the tools degrade to
+those text summaries and everything still works.
 
-![Anime search — cover grid with community scores](docs/screenshots/search.png)
+![Anime search — cover grid with community scores](https://raw.githubusercontent.com/UmutKDev/myanimelist-mcp/main/docs/screenshots/search.png)
 
-![Detail — hero page with score ring, synopsis, and inline list editing](docs/screenshots/detail.png)
+![Detail — hero page with score ring, synopsis, and inline list editing](https://raw.githubusercontent.com/UmutKDev/myanimelist-mcp/main/docs/screenshots/detail.png)
 
-![Weekly schedule — your currently-airing watching list, grouped by broadcast day, today highlighted](docs/screenshots/schedule.png)
+![Weekly schedule — your currently-airing watching list, grouped by broadcast day, today highlighted](https://raw.githubusercontent.com/UmutKDev/myanimelist-mcp/main/docs/screenshots/schedule.png)
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/list.png" alt="List browser with status tabs, filter/sort, and inline editing"></td>
-    <td width="50%"><img src="docs/screenshots/ranking.png" alt="MAL rankings with rank-movement indicators"></td>
+    <td width="50%"><img src="https://raw.githubusercontent.com/UmutKDev/myanimelist-mcp/main/docs/screenshots/list.png" alt="List browser with status tabs, filter/sort, and inline editing"></td>
+    <td width="50%"><img src="https://raw.githubusercontent.com/UmutKDev/myanimelist-mcp/main/docs/screenshots/ranking.png" alt="MAL rankings with rank-movement indicators"></td>
   </tr>
 </table>
 
-![Dashboard — profile, score histogram, top genres and studios](docs/screenshots/dashboard.png)
+![Dashboard — profile, score histogram, top genres and studios](https://raw.githubusercontent.com/UmutKDev/myanimelist-mcp/main/docs/screenshots/dashboard.png)
 
 The detail and list views edit your MAL entries in place (status / score / progress) and
 navigate between titles — all through the same tools, so nothing UI-only happens behind the
@@ -85,23 +147,20 @@ Aggregate tools (`get_user_stats`, `analyze_taste`) fetch the entire list in one
 pass (safety cap: 20,000 entries — beyond that a `truncated`/WARNING marker is included).
 `paging.next` URLs are validated (`https` + `api.myanimelist.net`) before being followed, so
 the bearer token can never be sent elsewhere. Verified MAL API facts (fields syntax,
-pagination, limits, error shapes) are documented in [NOTES.md](NOTES.md).
+pagination, limits, error shapes) are documented in [NOTES.md](https://github.com/UmutKDev/myanimelist-mcp/blob/main/NOTES.md).
 
-## Quick start
+## Development
 
 ```bash
-uv sync                          # install Python dependencies
-uv run pytest                    # unit tests (pure helpers, no network)
-uv run python -m mal_mcp.server  # serves http://0.0.0.0:8000/mcp (streamable-http)
+uv sync                 # install Python dependencies
+uv run pytest           # unit tests (pure helpers, no network)
+uv run myanimelist-mcp  # run the server over stdio (waits on stdin for JSON-RPC)
 ```
-
-Point an MCP client at `http://localhost:8000/mcp` (streamable HTTP) with an
-`Authorization: Bearer <MAL access token>` header — see [Authentication](#authentication).
 
 ### Building the UI
 
-The server runs without the UI bundle (it serves a small placeholder). To build the real
-interface into the wheel/image:
+The server runs without the UI bundle (it serves a small placeholder), so a clone never needs
+Node. To build the real interface:
 
 ```bash
 cd ui
@@ -112,16 +171,18 @@ npm run build   # emits src/mal_mcp/ui/dist/index.html (a single self-contained 
 For UI development without a host, `npm run dev` in `ui/` renders every view with fixture
 data and a view switcher — the screenshots above are those views.
 
+Released wheels always ship a freshly built bundle: `.github/workflows/publish.yml` builds it
+before `uv build` and fails the release if it is missing.
+
 ## Authentication
 
-The server needs `Authorization: Bearer <MAL access token>` per request; it stores nothing.
-Provide the token in one of three ways (this is the precedence order):
+The server needs a MyAnimeList access token and stores nothing on disk. Set the credentials in
+the `"env"` block of your MCP client config, in one of two ways (this is the precedence order):
 
-1. **`Authorization` header** — an MCP gateway or client sends the user's token per request.
-2. **`MAL_REFRESH_TOKEN` (+ `MAL_CLIENT_ID`, `MAL_CLIENT_SECRET`)** — recommended for a
-   single-account deployment. The server mints and renews access tokens itself via the
-   OAuth `refresh_token` grant, in memory only. Set up once, no monthly re-pasting.
-3. **`MAL_ACCESS_TOKEN`** — a static token (expires ~31 days); simplest for a quick test.
+1. **`MAL_REFRESH_TOKEN` (+ `MAL_CLIENT_ID`, `MAL_CLIENT_SECRET`)** — recommended. The server
+   mints and renews access tokens itself via the OAuth `refresh_token` grant, in memory only.
+   Set up once, no monthly re-pasting.
+2. **`MAL_ACCESS_TOKEN`** — a static token (expires ~31 days); simplest for a quick test.
 
 ### Getting a MAL token
 
@@ -146,40 +207,18 @@ curl -s https://myanimelist.net/v1/oauth2/token \
 # → {"token_type":"Bearer","expires_in":2678400,"access_token":"...","refresh_token":"..."}
 ```
 
-Keep the **`refresh_token`** for `MAL_REFRESH_TOKEN` (option 2), or the `access_token` for
-the header/static options.
+Keep the **`refresh_token`** for `MAL_REFRESH_TOKEN` (option 1), or the `access_token` for
+`MAL_ACCESS_TOKEN` (option 2).
 
 ### Environment variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `PORT` | `8000` | HTTP listen port |
-| `HOST` | `0.0.0.0` | Bind address |
 | `MAL_REFRESH_TOKEN` | *(unset)* | Enables self-renewing tokens via the `refresh_token` grant (needs `MAL_CLIENT_ID`). In-memory only. |
 | `MAL_CLIENT_ID` | *(unset)* | MAL app Client ID, for the refresh grant. |
 | `MAL_CLIENT_SECRET` | *(unset)* | MAL app Client Secret — required for "Web"-type apps. |
 | `MAL_ACCESS_TOKEN` | *(unset)* | Static fallback token (expires ~31 days). |
 | `MAL_TIMEZONE` | *(unset → JST)* | Default IANA timezone for `get_weekly_schedule` (e.g. `Europe/Istanbul`). The tool's `timezone` argument overrides it. |
-
-## Docker
-
-Prebuilt multi-arch image (the UI is built in the image):
-
-```bash
-docker run --rm -p 8000:8000 ghcr.io/umutkdev/myanimelist-mcp:latest
-```
-
-Or build locally:
-
-```bash
-docker build -t mal-mcp .
-docker run --rm -p 8000:8000 mal-mcp
-```
-
-`python:3.12-slim` + uv, runs as a non-root user, exposes port 8000, serves `/mcp`. Because
-the server is stateless (`stateless_http=True`), it scales freely behind any MCP gateway; the
-gateway (or client) supplies the per-request `Authorization` header, or you provision a token
-via the env vars above.
 
 ## Project layout
 
@@ -188,9 +227,16 @@ src/mal_mcp/
 ├── server.py       # FastMCP app, token helper, 20 tools, stats/format/summary helpers
 ├── mal_client.py   # MAL API wrapper: fields, pagination (paging.next), retries, error mapping
 ├── token_manager.py# self-renewing OAuth refresh_token grant (in-memory)
+├── __main__.py     # `python -m mal_mcp`
 └── ui/             # MCP Apps layer: ui:// resource + meta/ToolResult helpers
-    └── dist/       # built single-file HTML bundle (gitignored; built from ui/)
+    └── dist/       # built single-file HTML bundle (gitignored; built by CI for releases)
 ui/                 # Vite + React + TypeScript app (motion animations, 6 views)
 tests/              # offline unit tests (pure helpers, token manager, UI contract)
 NOTES.md            # verified MAL API / FastMCP facts
 ```
+
+The PyPI distribution is `myanimelist-mcp`; the import package is `mal_mcp`.
+
+## License
+
+[MIT](https://github.com/UmutKDev/myanimelist-mcp/blob/main/LICENSE)

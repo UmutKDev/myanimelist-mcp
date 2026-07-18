@@ -5,7 +5,7 @@ description: Use before coding against a MyAnimeList API behavior that isn't alr
 
 # Verify a MAL API fact
 
-This repo has a strong culture of recording **live-verified** MAL API / FastMCP / Obot behavior in
+This repo has a strong culture of recording **live-verified** MAL API / FastMCP behavior in
 `NOTES.md` before coding against it. Don't guess at API shape — verify, then write it down.
 
 ## Steps
@@ -21,7 +21,9 @@ This repo has a strong culture of recording **live-verified** MAL API / FastMCP 
 
 - **`fields` is mandatory** — omit it and MAL returns near-empty nodes and drops `list_status`.
 - **Rate-limit = HTTP 403** ("DoS detected"), not 429.
-- **PKCE is `plain`-only** — MAL does not support S256, which is why Obot's built-in OAuth can't drive
-  MAL directly and the `TokenManager` / `MAL_ACCESS_TOKEN` paths exist.
+- **PKCE is `plain`-only** — MAL does not support S256, which rules out most off-the-shelf OAuth
+  clients and is why the `TokenManager` / `MAL_ACCESS_TOKEN` paths exist instead of a login flow.
+- **Rotated refresh tokens stay valid** — load-bearing for the stdio distribution, since every
+  client launch re-submits the same `MAL_REFRESH_TOKEN` from the env. Re-verify before releases.
 - **DELETE returns `[]`** (non-dict body) with 200 and is idempotent in practice despite docs claiming 404.
 - **Redirects are treated as failures** on API calls (following one could fake empty/success results).

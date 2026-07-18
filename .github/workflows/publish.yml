@@ -1,0 +1,144 @@
+name: Publish
+
+# The filename must match the "Workflow name" field of the PyPI pending publisher
+# exactly, and the environment names below must match too, or OIDC fails after the
+# tag is already public. PyPI versions are immutable - a bad release needs x.y.z+1.
+on:
+  push:
+    tags: ["v*"]
+  # Manual dry run: builds and verifies everything but cannot publish - the publish
+  # job is gated on a v* tag ref, and only that job holds id-token: write.
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # src/mal_mcp/ui/dist/ is gitignored (.gitignore:7), so a fresh checkout has no
+      # bundle. hatchling's `artifacts` can only include files that already exist - it
+      # cannot materialise them - so this MUST run before `uv build` or the release
+      # silently ships the placeholder page.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install UI dependencies
+        working-directory: ./ui
+        run: npm ci --no-fund --no-audit
+
+      - name: Build UI bundle
+        working-directory: ./ui # vite outDir is relative: ../src/mal_mcp/ui/dist
+        run: npm run build # tsc --noEmit && vite build
+
+      - name: Guard - bundle exists and is the real build
+        run: |
+          set -euo pipefail
+          BUNDLE=src/mal_mcp/ui/dist/index.html
+          test -f "$BUNDLE" || { echo "::error::$BUNDLE was not emitted"; exit 1; }
+          BYTES=$(wc -c < "$BUNDLE")
+          echo "UI bundle: $BYTES bytes"
+          [ "$BYTES" -ge 200000 ] || { echo "::error::$BUNDLE is only $BYTES bytes (expected ~850000)"; exit 1; }
+          ! grep -q 'UI bundle not built' "$BUNDLE" || { echo "::error::placeholder HTML landed in dist/"; exit 1; }
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Run tests (strict - UI bundle required)
+        env:
+          MAL_MCP_REQUIRE_UI_BUNDLE: "1"
+        run: uv run --frozen pytest
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Guard - distributions actually contain the real UI bundle
+        run: |
+          python3 - <<'PY'
+          import glob, tarfile, zipfile
+          MIN, NAME = 200_000, "mal_mcp/ui/dist/index.html"
+
+          whls = glob.glob("dist/*.whl")
+          assert len(whls) == 1, whls
+          z = zipfile.ZipFile(whls[0])
+          assert NAME in z.namelist(), f"{NAME} MISSING from {whls[0]}"
+          size = z.getinfo(NAME).file_size
+          assert size >= MIN, f"{NAME} is only {size} bytes in the wheel"
+          assert b"UI bundle not built" not in z.read(NAME), "placeholder shipped in the wheel"
+          print("wheel OK:", whls[0], size, "bytes")
+
+          sdists = glob.glob("dist/*.tar.gz")
+          assert len(sdists) == 1, sdists
+          member = next((m for m in tarfile.open(sdists[0]).getmembers()
+                         if m.name.endswith("src/mal_mcp/ui/dist/index.html")), None)
+          assert member is not None and member.size >= MIN, f"UI bundle missing/small in {sdists[0]}"
+          print("sdist OK:", member.name, member.size, "bytes")
+          PY
+
+      # The dist guard only inspects file entries. This proves the wheel actually
+      # installs, imports, exposes the console script, and completes an MCP handshake -
+      # catching a broken `packages`/entry-point regression that a file listing cannot.
+      - name: Smoke-test the built wheel over stdio
+        run: |
+          uv run --isolated --no-project --with dist/*.whl python - <<'PY'
+          import asyncio
+          from fastmcp import Client
+          from fastmcp.client.transports import StdioTransport
+
+          async def main():
+              async with Client(StdioTransport("myanimelist-mcp", [])) as client:
+                  tools = await client.list_tools()
+                  assert len(tools) == 20, f"expected 20 tools, got {len(tools)}"
+                  app = (await client.read_resource("ui://mal-mcp/app.html"))[0]
+                  assert app.mimeType.startswith("text/html;profile=mcp-app"), app.mimeType
+                  assert "UI bundle not built" not in app.text, "placeholder served at runtime"
+                  print(f"stdio OK: {len(tools)} tools, {len(app.text)} chars of UI")
+
+          asyncio.run(main())
+          PY
+
+      - name: Check metadata and README rendering
+        run: uvx twine check --strict dist/*
+
+      - name: Verify the built version matches the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          BUILT=$(ls dist/*.tar.gz | sed -E 's|.*/myanimelist_mcp-(.*)\.tar\.gz|\1|')
+          echo "tag=$TAG built=$BUILT"
+          test "$TAG" = "$BUILT"
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: dist
+          path: dist/
+
+  publish-to-pypi:
+    name: Publish to PyPI
+    # Tags only: a workflow_dispatch run stops after `build`, so a dry run can never publish.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/myanimelist-mcp
+    permissions:
+      id-token: write # MANDATORY for Trusted Publishing (OIDC). No token, no secret.
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

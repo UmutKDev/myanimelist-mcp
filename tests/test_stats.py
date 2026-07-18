@@ -255,7 +255,7 @@ class _FakeManager:
 
 @pytest.fixture()
 def clean_token_env(monkeypatch):
-    # Outside an HTTP request get_http_headers() returns {}, so these control everything.
+    # Under stdio the environment is the only credential source, so these control everything.
     for var in ("MAL_ACCESS_TOKEN", "MAL_REFRESH_TOKEN", "MAL_CLIENT_ID", "MAL_CLIENT_SECRET"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(server, "_TOKEN_MANAGER", None)
@@ -264,8 +264,13 @@ def clean_token_env(monkeypatch):
 
 class TestResolveToken:
     def test_missing_everything_raises_actionable_error(self, clean_token_env):
-        with pytest.raises(ToolError, match="No MAL access token"):
+        with pytest.raises(ToolError, match="No MyAnimeList credentials") as excinfo:
             asyncio.run(_resolve_token())
+        # The message must name every env var a local stdio user could set.
+        message = str(excinfo.value)
+        assert "MAL_REFRESH_TOKEN" in message
+        assert "MAL_CLIENT_ID" in message
+        assert "MAL_ACCESS_TOKEN" in message
 
     def test_static_env_fallback(self, clean_token_env):
         clean_token_env.setenv("MAL_ACCESS_TOKEN", "env-token-123")
@@ -279,12 +284,26 @@ class TestResolveToken:
         assert token == "env-token-123"
 
     def test_credentialless_bearer_is_not_a_token(self, clean_token_env):
-        # "Authorization: Bearer" (scheme only) must not shadow the env fallback.
+        # A pasted "Bearer" with no credential must not read as a usable token.
         assert server._strip_bearer("Bearer") == ""
         assert server._strip_bearer("bearer  ") == ""
         clean_token_env.setenv("MAL_ACCESS_TOKEN", "Bearer")
-        with pytest.raises(ToolError, match="No MAL access token"):
+        with pytest.raises(ToolError, match="No MyAnimeList credentials"):
             asyncio.run(_resolve_token())
+
+    def test_half_a_refresh_config_names_the_missing_var(self, clean_token_env):
+        # from_env() needs BOTH vars, so one alone silently disables the manager;
+        # the error must not read as "you configured nothing".
+        clean_token_env.setenv("MAL_REFRESH_TOKEN", "refresh-only")
+        with pytest.raises(ToolError, match="Incomplete MyAnimeList credentials") as excinfo:
+            asyncio.run(_resolve_token())
+        assert "MAL_CLIENT_ID is not" in str(excinfo.value)
+
+    def test_half_a_refresh_config_the_other_way_round(self, clean_token_env):
+        clean_token_env.setenv("MAL_CLIENT_ID", "client-only")
+        with pytest.raises(ToolError, match="Incomplete MyAnimeList credentials") as excinfo:
+            asyncio.run(_resolve_token())
+        assert "MAL_REFRESH_TOKEN is not" in str(excinfo.value)
 
     def test_manager_preferred_over_static_env(self, clean_token_env):
         clean_token_env.setenv("MAL_ACCESS_TOKEN", "static-token")

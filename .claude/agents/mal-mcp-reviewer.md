@@ -1,6 +1,6 @@
 ---
 name: mal-mcp-reviewer
-description: Repo-aware code reviewer for the MyAnimeList MCP server. Use to review changed/uncommitted code against this project's specific invariants — token safety, MCP tool hints, the mandatory `fields` param, version-file sync, and test registration. Invoke after implementing a tool or bug fix, before committing.
+description: Repo-aware code reviewer for the MyAnimeList MCP server. Use to review changed/uncommitted code against this project's specific invariants — token safety, stdout purity, MCP tool hints, the mandatory `fields` param, packaging/release integrity, and test registration. Invoke after implementing a tool or bug fix, before committing.
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -14,12 +14,17 @@ say so briefly rather than inventing issues.
 ## Checklist
 
 **Token safety (hard invariants)**
-- No token material appears in any error message, exception, or log.
-- The `Authorization` header is read via `get_http_headers(include={"authorization"})` — FastMCP 3
-  strips it otherwise. No `auth=` passed to `FastMCP()`; `FASTMCP_SERVER_AUTH` stays unset.
+- No token material appears in any error message, exception, or log. Credentials come from env
+  vars the MCP client injects, so anything printed can end up in the client's persisted logs.
 - MAL I/O goes only through `_call_mal(lambda client: …)` — never a directly constructed `MALClient`
   in a tool (that path does token resolution, error mapping, and refresh-retry).
 - `paging.next` handling stays behind `_validated_paging_url`; usernames stay behind `_quote_user`.
+
+**stdio integrity**
+- **Nothing writes to stdout** — the MCP client owns it for JSON-RPC framing. No `print()`, no
+  logging handler on stdout. FastMCP's logging and banner already go to stderr.
+- `main()` stays `mcp.run(transport="stdio", show_banner=False)`. HTTP-only kwargs
+  (`host`/`port`/`path`/`stateless_http`/`json_response`) are a `TypeError` on the stdio path.
 
 **MCP tool correctness**
 - Annotation hints match semantics: read → `readOnlyHint: True`; write → `readOnlyHint: False` +
@@ -30,9 +35,16 @@ say so briefly rather than inventing issues.
 - A new tool is registered in `tests/test_ui.py` (`UI_TOOLS` vs `NON_UI_TOOLS`); a new `view` is wired
   into `ui/src/views/` + `ui/src/mcp/{bridge,types}.ts`.
 
-**Version sync (if this looks like a release)**
-- `pyproject.toml` `version` and `src/mal_mcp/__init__.py` `__version__` agree.
-- `ui/package.json` version is NOT bumped (intentionally decoupled).
+**Packaging / release integrity**
+- The version has one source: `__version__` in `src/mal_mcp/__init__.py`, read by
+  `[tool.hatch.version]`. `pyproject.toml` must have `dynamic = ["version"]` and **no** static
+  `version`. Any release tag `vX.Y.Z` matches the dunder. `ui/package.json` is NOT bumped.
+- The distribution name (`myanimelist-mcp`) and the `[project.scripts]` entry name must stay
+  identical, or `uvx myanimelist-mcp` breaks. The import package stays `mal_mcp`.
+- The dependency stays the `fastmcp` metapackage — never `fastmcp-slim` (ImportError at import).
+- If `pyproject.toml` or `.github/workflows/publish.yml` changed: confirm CI still builds the UI
+  **before** `uv build` and still hard-fails on a missing/placeholder
+  `src/mal_mcp/ui/dist/index.html`. A silent UI-less release cannot be undone on PyPI.
 
 **Style**
 - `from __future__ import annotations`; modern typed signatures; pure helpers underscore-prefixed;

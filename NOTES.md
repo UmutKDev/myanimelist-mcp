@@ -1,8 +1,9 @@
 # NOTES — verified facts (Faz 0)
 
 Verified on 2026-07-04 against the official MAL API reference (the OpenAPI 3 spec embedded
-at https://myanimelist.net/apiconfig/references/api/v2), the official authorization doc,
-fastmcp 3.4.2 source code, and Obot docs + source (obot, nanobot, mcp-catalog, mcp-oauth-proxy).
+at https://myanimelist.net/apiconfig/references/api/v2), the official authorization doc, and
+fastmcp 3.4.2 source code. The FastMCP / MCP Apps sections were re-verified 2026-07-18 during
+the move to stdio + PyPI.
 
 ## MAL API v2
 
@@ -80,7 +81,7 @@ fastmcp 3.4.2 source code, and Obot docs + source (obot, nanobot, mcp-catalog, m
   **idempotent in practice** (deleting an absent entry also returns 200, despite docs saying
   404); 404 does occur for unknown ids. Client treats non-dict 2xx bodies on non-GET as success.
 
-## MAL OAuth2 (for the Obot/README side only — no OAuth code in this server)
+## MAL OAuth2 (for the README/token-setup side — no interactive login flow in this server)
 
 - Authorize: `https://myanimelist.net/v1/oauth2/authorize`
 - Token: `https://myanimelist.net/v1/oauth2/token` (also used for `grant_type=refresh_token`)
@@ -91,38 +92,42 @@ fastmcp 3.4.2 source code, and Obot docs + source (obot, nanobot, mcp-catalog, m
   `expires_in=2678400` (31 days) for access tokens (well-known docs/behavior discrepancy).
 - Refresh grant behavior (verified live 2026-07-05): `grant_type=refresh_token` returns a
   fresh 31-day access token AND a new (rotated) refresh token; **previously issued refresh
-  tokens remain valid after rotation** — using the same old token twice works. This makes an
-  env-provisioned refresh token safe across container restarts without any persistence.
+  tokens remain valid after rotation** — using the same old token twice works.
+  ⚠️ **This fact is load-bearing for the stdio distribution.** Every client launch is a cold
+  start that re-submits the *same* `MAL_REFRESH_TOKEN` from the env; `TokenManager` never
+  persists the rotated one. If MAL ever makes refresh tokens single-use, the documented setup
+  breaks on the second session. Re-verify with the `verify-mal-api-fact` skill before releases.
 - App registration: https://myanimelist.net/apiconfig — App Type **Web** receives a Client Secret;
   Android/iOS/Other are public clients (no secret).
 
 ## FastMCP (server framework)
 
 - Using standalone `fastmcp` **3.4.2** (pinned `>=3.4,<4`), Python ≥ 3.12 here.
-- Streamable HTTP: `mcp.run(transport="http", host="0.0.0.0", port=..., path="/mcp",
-  stateless_http=True)`. Stateless mode is the recommended setup behind gateways/load balancers.
-- **Gotcha (verified in installed source)**: `fastmcp.server.dependencies.get_http_headers()`
-  strips `authorization` by default in 3.x (it did NOT in 2.x). Use
-  `get_http_headers(include={"authorization"})` to receive it. It never raises and returns
-  lowercased header names.
-- No `auth=` is passed to `FastMCP()` and `FASTMCP_SERVER_AUTH` must stay unset — any auth
-  provider would intercept/validate the Authorization header instead of passing it through.
+- `Transport = Literal["stdio", "http", "sse", "streamable-http"]`; **stdio is the default**
+  (`fastmcp/settings.py:257`), so a bare `mcp.run()` is already a stdio server.
+- **`run()` forwards `**transport_kwargs` verbatim**, and `run_stdio_async()` accepts only
+  `show_banner` / `log_level` / `stateless`. Passing `host`, `port`, `path`, `stateless_http`
+  or `json_response` alongside `transport="stdio"` is a `TypeError` at launch — verified in
+  `fastmcp/server/mixins/transport.py:185-190`.
+- **Banner goes to stderr** (`Console(stderr=True)`, `fastmcp/utilities/cli.py:246`), as does all
+  FastMCP logging — so stdout stays pure JSON-RPC. But `log_server_banner()` calls
+  `check_for_newer_version()`, a **blocking 2s `httpx.get` to pypi.org** on every start
+  (`utilities/version_check.py:69`). Hence `show_banner=False` in `main()`.
+- **`get_http_headers()` never raises** and returns `{}` when there is no HTTP request context
+  (`server/dependencies.py:456-464`), i.e. always under stdio. Verified live. It also strips
+  `authorization` by default in 3.x unless re-included — irrelevant here now, but that is why
+  the old HTTP passthrough needed `include={"authorization"}`.
 - `fastmcp.exceptions.ToolError` messages are always forwarded to the client — used for all
   user-facing tool errors.
+- The dependency must remain the `fastmcp` metapackage: `fastmcp.server.dependencies` imports
+  starlette + `mcp` at module scope, which only arrive via the `[client,server]` extras.
+  Switching to `fastmcp-slim` is an `ImportError` at import time, not a graceful degrade.
 
-## Obot gateway — compatibility finding (important)
+## MCP Apps over stdio
 
-- Containerized server registration: catalog entry `runtime: containerized` with
-  `containerizedConfig: {image, port, path}` (port + path required). This server: port **8000**,
-  path **`/mcp`**. UI: MCP Management → MCP Servers → Add MCP Server → Containerized.
-- Obot "Static OAuth": admin enters only Client ID + Secret. Authorize/token endpoints are NOT
-  configurable — Obot discovers them via the MCP auth spec (401 + `WWW-Authenticate` → RFC 9728
-  protected-resource metadata → RFC 8414 AS metadata). Callback:
-  `https://<obot-host>/oauth/mcp/callback`. Tokens are forwarded as `Authorization: Bearer` and
-  refreshed automatically.
-- ⚠️ **Obot hardcodes PKCE S256** (verified in nanobot `pkg/mcp/oauth.go` and mcp-oauth-proxy):
-  there is no way to select `plain` or disable PKCE. Since MAL supports only `plain` and offers no
-  well-known metadata, **Obot's built-in OAuth flow cannot drive MAL directly today.**
-- Practical consequence: the server design (stateless Bearer passthrough) is unaffected; the
-  working deployment today is a user-supplied `Authorization` header in Obot. See README for the
-  options and setup.
+- SEP-1865 is **Final**, and `ui://` resources are transport-independent — the app↔host channel
+  is `postMessage`, not the MCP transport. Verified live: the full 833 KB single-file bundle is
+  served intact through a real stdio subprocess with `mimeType: text/html;profile=mcp-app`.
+- Which hosts actually *render* it varies; see
+  https://modelcontextprotocol.io/extensions/client-matrix. The README should not promise any
+  specific client — only that the resource is served and spec-conformant.

@@ -4,14 +4,16 @@
       "Bash(uv sync:*)",
       "Bash(uv lock:*)",
       "Bash(uv run pytest:*)",
-      "Bash(uv run python -m mal_mcp.server:*)",
+      "Bash(uv build:*)",
       "Bash(npm ci:*)",
       "Bash(npm run build:*)",
       "Bash(npm run typecheck:*)",
       "Bash(npm run dev:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(git tag:*)",
+      "Bash(gh run:*)"
     ]
   }
 }

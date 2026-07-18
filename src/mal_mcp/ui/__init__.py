@@ -54,7 +54,10 @@ _PLACEHOLDER_HTML = """<!doctype html>
 <body>
   <div class="card">
     <h1>MyAnimeList App</h1>
-    <p>UI bundle not built &mdash; run <code>npm ci &amp;&amp; npm run build</code> in <code>ui/</code>.</p>
+    <p>UI bundle not built.<br>
+       Working from a clone? Run <code>npm ci &amp;&amp; npm run build</code> in <code>ui/</code>.<br>
+       Installed from PyPI? That&rsquo;s a packaging bug &mdash; please report it at
+       <code>github.com/UmutKDev/myanimelist-mcp/issues</code>.</p>
   </div>
 </body>
 </html>
@@ -68,7 +71,7 @@ def _dist_html() -> str | None:
     """The built single-file app, or None when ui/ has not been built.
 
     A successful read is cached for the process lifetime (the bundle is immutable
-    in the container); a miss is NOT cached, so building ui/ while a dev server is
+    at runtime); a miss is NOT cached, so building ui/ while a dev server is
     running takes effect on the next read.
     """
     global _dist_cache

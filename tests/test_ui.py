@@ -1,7 +1,9 @@
 """Contract tests for the MCP Apps UI layer (offline; no built bundle required)."""
 
 import asyncio
+import os
 
+import pytest
 from fastmcp import Client
 from fastmcp.tools import ToolResult
 
@@ -41,7 +43,7 @@ class TestToolMeta:
         async def run():
             async with Client(mcp) as client:
                 tools = {t.name: t for t in await client.list_tools()}
-                assert UI_TOOLS | NON_UI_TOOLS == set(tools)  # all 19, no strays
+                assert UI_TOOLS | NON_UI_TOOLS == set(tools)  # all 20, no strays
                 for name in UI_TOOLS:
                     meta = tools[name].meta or {}
                     assert meta["ui"]["resourceUri"] == APP_RESOURCE_URI, name
@@ -101,6 +103,30 @@ class TestAppResource:
                 assert item.text == "<!doctype html><title>mal-app</title>"
 
         asyncio.run(run())
+
+
+# The other tests in this file monkeypatch _dist_html, so none of them notice a
+# missing bundle on disk - which is exactly how a UI-less wheel could reach PyPI.
+MIN_BUNDLE_BYTES = 200_000  # a real build is ~850 KB; the placeholder is ~1 KB
+REQUIRE_BUNDLE = os.getenv("MAL_MCP_REQUIRE_UI_BUNDLE") == "1"
+
+
+class TestBuiltBundleOnDisk:
+    """Guards the packaged artifact itself. Release builds set MAL_MCP_REQUIRE_UI_BUNDLE=1."""
+
+    def test_bundle_is_present_and_real(self, monkeypatch):
+        monkeypatch.setattr(ui, "_dist_cache", None)  # bypass the process-lifetime cache
+        html = ui._dist_html()
+        if html is None:
+            if REQUIRE_BUNDLE:
+                pytest.fail(
+                    "src/mal_mcp/ui/dist/index.html is missing. Run `npm ci && npm run build` "
+                    "in ui/ before building the distribution."
+                )
+            pytest.skip("ui/ not built (dev tree)")
+        assert len(html) >= MIN_BUNDLE_BYTES
+        assert "UI bundle not built" not in html  # the placeholder must not be the bundle
+        assert html.lstrip().lower().startswith("<!doctype html")
 
 
 SEARCH_EDGES = [
